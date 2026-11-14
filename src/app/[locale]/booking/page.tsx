@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense, useMemo } from "react";
+import { useState, useEffect, Suspense, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
@@ -415,6 +415,42 @@ function BookingContent() {
     }
     return (matchedReturnZone?.returnFee ?? 0) * 100;
   }, [selectedReturnLoc, matchedReturnZone]);
+
+  const getLocationPickupFeeLabel = useCallback(
+    (l: LocationItem) => {
+      let fee = 0;
+      if (l.pickupFee && Number(l.pickupFee) > 0) {
+        fee = Math.round(Number(l.pickupFee) / 100);
+      } else {
+        const matched = matchZone(l, zoneConfig.zones);
+        fee = matched?.deliveryFee ?? 0;
+      }
+      if (fee === 0) {
+        return locale === "ar" ? "(مجاناً)" : locale === "en" ? "(Free)" : "(Gratuit)";
+      }
+      return locale === "ar" ? `(+${fee} د.ت)` : `(+${fee} DT)`;
+    },
+    [zoneConfig.zones, locale]
+  );
+
+  const getLocationReturnFeeLabel = useCallback(
+    (l: LocationItem) => {
+      let fee = 0;
+      if (l.returnFee && Number(l.returnFee) > 0) {
+        fee = Math.round(Number(l.returnFee) / 100);
+      } else if (l.customReturnFee && Number(l.customReturnFee) > 0) {
+        fee = Math.round(Number(l.customReturnFee) / 100);
+      } else {
+        const matched = matchZone(l, zoneConfig.zones);
+        fee = matched?.returnFee ?? 0;
+      }
+      if (fee === 0) {
+        return locale === "ar" ? "(مجاناً)" : locale === "en" ? "(Free)" : "(Gratuit)";
+      }
+      return locale === "ar" ? `(+${fee} د.ت)` : `(+${fee} DT)`;
+    },
+    [zoneConfig.zones, locale]
+  );
 
   const isDifferentLocation = Boolean(data.pickupLocationId && data.returnLocationId && data.pickupLocationId !== data.returnLocationId);
   // User policy: 0 DT extra when returning to a different agency
@@ -834,7 +870,7 @@ function BookingContent() {
                     >
                       {locations.map((l) => (
                         <option key={l._id} value={l._id}>
-                          {getLocalizedName(l.name, locale)}
+                          {getLocalizedName(l.name, locale)} {getLocationPickupFeeLabel(l)}
                         </option>
                       ))}
                       <option value="custom">
@@ -870,7 +906,7 @@ function BookingContent() {
                     >
                       {locations.map((l) => (
                         <option key={l._id} value={l._id}>
-                          {getLocalizedName(l.name, locale)}
+                          {getLocalizedName(l.name, locale)} {getLocationReturnFeeLabel(l)}
                         </option>
                       ))}
                       <option value="custom">
@@ -1007,10 +1043,10 @@ function BookingContent() {
                     </div>
                     <div className="text-xs text-blue-700 dark:text-blue-300 font-medium">
                       {locale === "ar"
-                        ? "✓ مسافة غير محدودة والتأمين مشمول"
+                        ? "✓ مسافة غير محدودة"
                         : locale === "en"
-                        ? "✓ Unlimited mileage & Insurance included"
-                        : "✓ Kilométrage illimité & Assurance incluse"}
+                        ? "✓ Unlimited mileage"
+                        : "✓ Kilométrage illimité"}
                     </div>
                   </div>
                 )}
