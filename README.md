@@ -98,6 +98,20 @@ Seeding is a maintenance operation and is **locked down**:
 curl -X POST -H "x-seed-token: $SEED_TOKEN" http://localhost:3000/api/seed
 ```
 
+### Recovering admin access on Vercel
+
+If the admin password is unknown, reset it against the **production database** from a trusted local terminal. This does not expose a public password-reset endpoint.
+
+1. Link the project with the Vercel CLI if needed: `npx vercel link`.
+2. Pull production environment variables into the ignored local file:
+   `npx vercel env pull .env.production.local --environment=production`
+3. Run `npm run reset:admin`. Confirm the displayed database is the production database, type `RESET`, and enter a new password of at least 12 characters twice. Input is hidden.
+   The default admin email is `admin@paylesscarrental.com`; enter a different email at the prompt if required. The account will be created if it does not exist.
+4. Sign in at `https://payless-tn.vercel.app/admin/login` with the selected email and new password.
+5. Remove the local production env file after use: `Remove-Item .env.production.local`.
+
+The script resets only the selected account's password, active status, and superadmin role. It does not seed or modify other application data.
+
 ### 4. Admin access
 Log in at `/admin/login` with the superadmin created above and **change the password immediately**.
 No credentials are shipped with the code.

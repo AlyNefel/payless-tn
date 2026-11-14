@@ -6,7 +6,8 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "reset:admin": "node scripts/reset-admin-password.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

@@ -38,27 +38,28 @@ async function run() {
   // 1. Superadmin User
   const usersColl = db.collection('users');
   const adminEmail = 'admin@paylesscarrental.com';
-  const hashedPassword = await bcrypt.hash('Admin@12345!', 12);
-
-  await usersColl.updateOne(
-    { email: adminEmail },
-    {
-      $set: {
-        name: 'Admin Payless Tunisia',
-        email: adminEmail,
-        password: hashedPassword,
-        role: 'superadmin',
-        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
-        phone: '+216 25 120 130',
-        isActive: true,
-        preferences: { language: 'fr', notifications: true },
-        updatedAt: new Date()
-      },
-      $setOnInsert: { createdAt: new Date() }
-    },
-    { upsert: true }
-  );
-  console.log('✓ Superadmin seeded (admin@paylesscarrental.com / Admin@12345!)');
+  const existingAdmin = await usersColl.findOne({ email: adminEmail });
+  if (!existingAdmin) {
+    const initialPassword = process.env.ADMIN_INITIAL_PASSWORD;
+    if (!initialPassword || initialPassword.length < 12) {
+      throw new Error('ADMIN_INITIAL_PASSWORD (min. 12 characters) is required to create the first superadmin.');
+    }
+    await usersColl.insertOne({
+      name: 'Admin Payless Tunisia',
+      email: adminEmail,
+      password: await bcrypt.hash(initialPassword, 12),
+      role: 'superadmin',
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80',
+      phone: '+216 25 120 130',
+      isActive: true,
+      preferences: { language: 'fr', notifications: true },
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+    console.log('✓ Created initial superadmin account.');
+  } else {
+    console.log('✓ Existing superadmin left unchanged.');
+  }
 
   // 2. 11 Locations in Tunisia
   const locationsColl = db.collection('locations');

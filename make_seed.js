@@ -17,7 +17,6 @@ import {
   Notification,
   AgencySetting,
 } from "@/models";
-import bcrypt from "bcryptjs";
 
 export interface SeedResult {
   success: boolean;
@@ -42,14 +41,17 @@ export async function seedDatabase(): Promise<SeedResult> {
 
   // 1. Superadmin User
   const adminEmail = "admin@paylesscarrental.com";
-  let superadmin = await User.findOne({ email: adminEmail }).select("+password");
+  let superadmin = await User.findOne({ email: adminEmail });
 
   if (!superadmin) {
-    const hashedPassword = await bcrypt.hash("Admin@12345!", 12);
+    const initialPassword = process.env.ADMIN_INITIAL_PASSWORD;
+    if (!initialPassword || initialPassword.length < 12) {
+      throw new Error("ADMIN_INITIAL_PASSWORD (min. 12 characters) is required to create the first superadmin.");
+    }
     superadmin = await User.create({
       name: "Admin Payless Tunisia",
       email: adminEmail,
-      password: hashedPassword,
+      password: initialPassword,
       role: "superadmin",
       avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80",
       phone: "+216 25 120 130",
@@ -59,16 +61,6 @@ export async function seedDatabase(): Promise<SeedResult> {
         notifications: true,
       },
     });
-  } else {
-    const isPassMatch = await superadmin.comparePassword("Admin@12345!");
-    if (!isPassMatch || superadmin.role !== "superadmin") {
-      const hashedPassword = await bcrypt.hash("Admin@12345!", 12);
-      await User.findByIdAndUpdate(superadmin._id, {
-        password: hashedPassword,
-        role: "superadmin",
-        isActive: true,
-      });
-    }
   }
 
   // 2. 11 Locations in Tunisia (from HML Rent Car)
@@ -781,4 +773,3 @@ export async function seedDatabase(): Promise<SeedResult> {
 
 fs.writeFileSync('payless-car-rental/src/lib/seed.ts', seedContent, 'utf8');
 console.log('Successfully generated complete seed.ts with Tunisian data, full terms, 25 cars, and 11 locations!');
-
