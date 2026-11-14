@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense, useMemo, useCallback } from "react";
+import { useState, useEffect, Suspense, useMemo, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
@@ -123,6 +123,31 @@ function BookingContent() {
   }, []);
 
   const [step, setStep] = useState<Step>(1);
+  const stepContainerRef = useRef<HTMLDivElement>(null);
+  const isFirstRender = useRef(true);
+
+  // Auto-scroll smoothly to the start of the step whenever step changes
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    const scrollToStepTop = () => {
+      if (typeof window !== "undefined") {
+        const target = stepContainerRef.current;
+        if (target) {
+          const top = target.getBoundingClientRect().top + window.scrollY - 20;
+          window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+        } else {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
+      }
+    };
+
+    scrollToStepTop();
+    const timer = setTimeout(scrollToStepTop, 220);
+    return () => clearTimeout(timer);
+  }, [step]);
   const [loading, setLoading] = useState(false);
   const [locations, setLocations] = useState<LocationItem[]>(DEFAULT_LOCATIONS);
   // Loaded from /api/extras only: hardcoded fallbacks had fake ids the booking API ignored.
@@ -780,7 +805,7 @@ function BookingContent() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-neutral-950 py-10">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6">
+      <div ref={stepContainerRef} className="max-w-4xl mx-auto px-4 sm:px-6">
         {/* Progress Stepper */}
         {step < 6 && (
           <div className="mb-8">
@@ -2719,7 +2744,14 @@ function BookingContent() {
           <div className="flex items-center justify-between mt-6">
             <button
               type="button"
-              onClick={() => setStep((s) => Math.max(1, s - 1) as Step)}
+              onClick={() => {
+                setStep((s) => Math.max(1, s - 1) as Step);
+                if (typeof window !== "undefined") {
+                  const target = stepContainerRef.current;
+                  const top = target ? target.getBoundingClientRect().top + window.scrollY - 20 : 0;
+                  window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+                }
+              }}
               disabled={step === 1}
               className="px-5 py-2.5 border border-border dark:border-neutral-700 rounded-xl text-sm font-medium hover:bg-muted/50 disabled:opacity-30 transition-colors"
             >
@@ -2729,7 +2761,14 @@ function BookingContent() {
             {step < 5 ? (
               <button
                 type="button"
-                onClick={() => setStep((s) => (s + 1) as Step)}
+                onClick={() => {
+                  setStep((s) => (s + 1) as Step);
+                  if (typeof window !== "undefined") {
+                    const target = stepContainerRef.current;
+                    const top = target ? target.getBoundingClientRect().top + window.scrollY - 20 : 0;
+                    window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+                  }
+                }}
                 disabled={!canProceed(step)}
                 className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-40 transition-colors flex items-center gap-2 shadow-sm"
               >
