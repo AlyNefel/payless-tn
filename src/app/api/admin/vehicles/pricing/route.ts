@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   try {
     await connectDB();
     const vehicles = await Vehicle.find({})
-      .select("brand model licensePlate category images pricing status")
+      .select("brand model licensePlate category images pricing status minRentalDays")
       .sort({ brand: 1, model: 1 })
       .lean();
 
@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
         category: v.category || "Berline",
         imageUrl: v.images?.find((img: any) => img.isPrimary)?.url || v.images?.[0]?.url || "",
         status: v.status || "available",
+        minRentalDays: v.minRentalDays || v.pricing?.minRentalDays || 1,
         pricing: {
           daily: v.pricing?.daily >= 1000 ? Math.round(v.pricing.daily / 100) : v.pricing?.daily || 0,
           weekly: v.pricing?.weekly >= 1000 ? Math.round(v.pricing.weekly / 100) : v.pricing?.weekly || 0,
@@ -63,7 +64,7 @@ export async function PUT(request: NextRequest) {
   try {
     await connectDB();
     const body = await request.json();
-    const { vehicleId, seasonalPrices, dailyRate } = body;
+    const { vehicleId, seasonalPrices, dailyRate, minRentalDays } = body;
 
     if (!vehicleId) {
       return NextResponse.json({ error: "vehicleId is required" }, { status: 400 });
@@ -72,6 +73,14 @@ export async function PUT(request: NextRequest) {
     const vehicle = await Vehicle.findById(vehicleId);
     if (!vehicle) {
       return NextResponse.json({ error: "Vehicle not found" }, { status: 404 });
+    }
+
+    if (minRentalDays !== undefined) {
+      const days = Math.max(1, Number(minRentalDays) || 1);
+      vehicle.minRentalDays = days;
+      if (vehicle.pricing) {
+        (vehicle.pricing as any).minRentalDays = days;
+      }
     }
 
     // Determine if base pricing is stored in cents/millimes (e.g. 9000 for 90 TND)

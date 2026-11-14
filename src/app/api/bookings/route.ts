@@ -279,6 +279,18 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Minimum rental period check
+      const requiredMinDays = vDoc.minRentalDays || vDoc.pricing?.minRentalDays || 1;
+      if (rentalDays < requiredMinDays) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Le véhicule ${vDoc.brand} ${vDoc.model} exige une durée minimum de location de ${requiredMinDays} jour${requiredMinDays > 1 ? "s" : ""} (votre durée: ${rentalDays} jour${rentalDays > 1 ? "s" : ""}).`,
+          },
+          { status: 400 }
+        );
+      }
+
       // Concurrency Anti-Double Booking Check for each vehicle
       const stockInfo = await getVehicleStockAvailability(vDoc._id.toString(), pickupDate, returnDate);
       if (!stockInfo.isAvailable || stockInfo.availableUnits <= 0) {

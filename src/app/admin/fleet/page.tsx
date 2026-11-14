@@ -41,6 +41,7 @@ type FleetVehicle = Omit<VehicleItem, "category"> & {
   images: { url: string; publicId?: string; alt?: string }[];
   luggageCapacity: number;
   totalUnits: number;
+  minRentalDays?: number;
 };
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -137,6 +138,7 @@ interface FullVehicleFormData {
   dailyPrice: number;
   weeklyPrice: number;
   monthlyPrice: number;
+  minRentalDays: number;
   licensePlate: string;
   color: string;
   year: number;
@@ -177,6 +179,7 @@ const DEFAULT_FORM: FullVehicleFormData = {
   dailyPrice: 90,
   weeklyPrice: 560,
   monthlyPrice: 2100,
+  minRentalDays: 1,
   licensePlate: "",
   color: "",
   year: 2024,
@@ -296,6 +299,7 @@ export default function AdminFleetPage() {
               monthly: tnd(v.pricing?.monthly),
               deposit: tnd(v.pricing?.deposit),
             },
+            minRentalDays: v.minRentalDays || v.pricing?.minRentalDays || 1,
             status: v.status || "available",
             mileage: v.mileage || 0,
             licensePlate: v.licensePlate || "",
@@ -413,6 +417,7 @@ export default function AdminFleetPage() {
       dailyPrice: car.pricing.daily,
       weeklyPrice: car.pricing.weekly,
       monthlyPrice: car.pricing.monthly,
+      minRentalDays: car.minRentalDays || 1,
       fixedDeposit: car.pricing.deposit,
       licensePlate: car.licensePlate,
       color: car.color,
@@ -495,6 +500,7 @@ export default function AdminFleetPage() {
       mileage: formData.mileage,
       color: formData.color,
       totalUnits: formData.totalCarsInGarage,
+      minRentalDays: formData.minRentalDays || 1,
       features,
       // Entered in TND; the API converts to minor units.
       pricing: {
@@ -736,10 +742,15 @@ export default function AdminFleetPage() {
                   <div className="absolute top-3 left-3 px-2 py-0.5 rounded bg-black/70 border border-white/20 font-mono text-[11px] text-amber-300 font-bold backdrop-blur-md">
                     {car.licensePlate}
                   </div>
-                  <div className="absolute bottom-2 left-3 text-xs font-semibold">
+                  <div className="absolute bottom-2 left-3 text-xs font-semibold flex items-center gap-1.5">
                     <span className="px-2 py-0.5 rounded-md bg-blue-600/30 text-blue-200 border border-blue-500/20 text-[10px] uppercase font-bold backdrop-blur-md">
                       {car.category}
                     </span>
+                    {(car.minRentalDays || 1) > 1 && (
+                      <span className="px-2 py-0.5 rounded-md bg-amber-500/90 text-white text-[10px] font-bold backdrop-blur-md shadow-xs">
+                        Min. {car.minRentalDays} j
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="p-4 space-y-3">
@@ -869,7 +880,12 @@ export default function AdminFleetPage() {
                       {car.transmission} / {car.fuelType}
                     </td>
                     <td className="px-5 py-3.5 font-bold text-slate-900 dark:text-white">
-                      {car.pricing.daily} TND
+                      <div>{car.pricing.daily} TND</div>
+                      {(car.minRentalDays || 1) > 1 && (
+                        <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 block">
+                          Min. {car.minRentalDays} j
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5">
                       {car.status === "available" && (
@@ -1556,6 +1572,40 @@ export default function AdminFleetPage() {
                       </div>
                       <span className="text-slate-400 italic text-[11px]">
                         (taxes are not applicable for deposit - it is a refundable amount without taxes)
+                      </span>
+                    </div>
+
+                    {/* Minimum Rental Period */}
+                    <div className="flex items-center gap-4">
+                      <div className="w-44 shrink-0">
+                        <label className="font-semibold text-slate-700 dark:text-slate-300 block">
+                          Durée minimum location :<span className="text-red-500">*</span>
+                        </label>
+                        <p className="text-[10px] text-slate-400">
+                          (Période min. en jours)
+                        </p>
+                      </div>
+                      <div className="relative w-40">
+                        <input
+                          type="number"
+                          required
+                          min={1}
+                          max={365}
+                          value={formData.minRentalDays}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              minRentalDays: Math.max(1, Number(e.target.value) || 1),
+                            })
+                          }
+                          className="w-full rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-3 py-2 text-slate-800 dark:text-white font-bold focus:outline-none focus:border-blue-500 pr-14"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-blue-500">
+                          jours
+                        </span>
+                      </div>
+                      <span className="text-slate-400 italic text-[11px]">
+                        (Nombre de jours minimum requis pour réserver ce véhicule)
                       </span>
                     </div>
 

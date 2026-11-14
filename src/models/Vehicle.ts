@@ -38,7 +38,9 @@ export interface IVehicle {
     currency: string;
     deposit: number;
     seasonalPrices?: ISeasonalPrice[];
+    minRentalDays?: number;
   };
+  minRentalDays?: number;
   features: string[];
   hasAirConditioning: boolean;
   hasGPS: boolean;
@@ -100,6 +102,7 @@ const VehicleSchema = new Schema<IVehicle>(
       monthly: { type: Number, required: true },
       currency: { type: String, default: "TND" },
       deposit: { type: Number, default: 0 },
+      minRentalDays: { type: Number, default: 1 },
       seasonalPrices: [
         {
           name: { type: String, default: "" },
@@ -112,6 +115,7 @@ const VehicleSchema = new Schema<IVehicle>(
         },
       ],
     },
+    minRentalDays: { type: Number, default: 1, min: 1 },
     features: [String],
     hasAirConditioning: { type: Boolean, default: true },
     hasGPS: { type: Boolean, default: false },

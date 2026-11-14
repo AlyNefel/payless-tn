@@ -38,6 +38,7 @@ const vehicleInputSchema = z.object({
   color: z.string().trim().max(40).optional().default(""),
   licensePlate: z.string().trim().min(2).max(20),
   mileage: z.number().min(0).max(2_000_000).optional(),
+  minRentalDays: z.number().int().min(1).max(365).optional().default(1),
   totalUnits: z.number().int().min(1).max(200),
   features: z.array(z.string().max(60)).max(30).default([]),
   pricing: z.object({
@@ -72,6 +73,8 @@ function toVehicleFields(input: VehicleInput) {
     totalUnits: input.totalUnits,
     features: input.features,
     hasAirConditioning: input.features.includes("A/C"),
+    minRentalDays: input.minRentalDays || 1,
+    "pricing.minRentalDays": input.minRentalDays || 1,
     "pricing.daily": toMinor(input.pricing.daily),
     "pricing.weekly": toMinor(input.pricing.weekly),
     "pricing.monthly": toMinor(input.pricing.monthly),

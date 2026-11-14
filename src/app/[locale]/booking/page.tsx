@@ -85,12 +85,13 @@ interface Vehicle {
   model: string;
   year: number;
   images: { url: string; isPrimary: boolean }[];
-  pricing: { daily: number; deposit: number; currency?: string };
+  pricing: { daily: number; deposit: number; currency?: string; minRentalDays?: number };
   transmission: string;
   fuelType: string;
   seats: number;
   availableUnits?: number;
   totalUnits?: number;
+  minRentalDays?: number;
 }
 
 interface CartItem {
@@ -796,9 +797,19 @@ function BookingContent() {
     { n: 6, label: locale === "ar" ? "التأكيد" : locale === "en" ? "Confirmation" : "Confirmation" },
   ];
 
+  const hasMinRentalViolation = useMemo(() => {
+    return cart.some((c) => {
+      const minDays = c.vehicle.minRentalDays || (c.vehicle.pricing as any)?.minRentalDays || 1;
+      return rentalDays < minDays;
+    });
+  }, [cart, rentalDays]);
+
   const canProceed = (s: Step) => {
     if (s === 1) return data.pickupDate && data.returnDate && data.pickupLocationId;
-    if (s === 2) return cart.length > 0 && unavailableIds.length === 0;
+    if (s === 2) {
+      if (cart.length === 0 || unavailableIds.length > 0) return false;
+      return !hasMinRentalViolation;
+    }
     if (s === 4) return Boolean(data.firstName.trim() && data.lastName.trim() && data.email.trim() && data.phone.trim() && data.licenceYear.trim());
     return true;
   };
@@ -1128,6 +1139,33 @@ function BookingContent() {
                   </div>
                 )}
 
+                {hasMinRentalViolation && (
+                  <div role="alert" className="flex items-start gap-2 p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs">
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-semibold">
+                        {locale === "ar"
+                          ? "مدة الحجز غير كافية لبعض السيارات المحددة:"
+                          : locale === "en"
+                          ? "Rental duration does not meet the minimum period for selected vehicle(s):"
+                          : "La durée de réservation ne respecte pas le minimum requis pour le(s) véhicule(s) sélectionné(s) :"}
+                      </p>
+                      <ul className="list-disc list-inside space-y-0.5">
+                        {cart
+                          .filter((c) => rentalDays < (c.vehicle.minRentalDays || (c.vehicle.pricing as any)?.minRentalDays || 1))
+                          .map((c, i) => {
+                            const mDays = c.vehicle.minRentalDays || (c.vehicle.pricing as any)?.minRentalDays || 1;
+                            return (
+                              <li key={i}>
+                                <strong>{c.vehicle.brand} {c.vehicle.model}</strong> : {locale === "ar" ? `الحد الأدنى ${mDays} أيام (حجزك الحالي: ${rentalDays} يوم)` : locale === "en" ? `Minimum ${mDays} days required (current: ${rentalDays} days)` : `Minimum ${mDays} jours requis (votre durée : ${rentalDays} j)`}
+                              </li>
+                            );
+                          })}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
                 {/* Selected Vehicle Card - Direct flow without needing to see the full list again */}
                 {cart.length > 0 && (
                   <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50/60 dark:from-blue-950/40 dark:to-indigo-950/20 border-2 border-blue-400 dark:border-blue-700 shadow-sm space-y-4">
@@ -1148,7 +1186,7 @@ function BookingContent() {
 
                       <button
                         type="button"
-                        disabled={unavailableIds.length > 0}
+                        disabled={unavailableIds.length > 0 || hasMinRentalViolation}
                         onClick={() => {
                           setStep(3);
                           if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1162,39 +1200,50 @@ function BookingContent() {
 
                     {/* Pre-selected cars details */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      {cart.map((c, idx) => (
-                        <div
-                          key={c.vehicle._id + "-" + idx}
-                          className="flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-neutral-900 border border-blue-200 dark:border-blue-800 shadow-xs"
-                        >
-                          <img
-                            src={c.vehicle.images?.[0]?.url || "https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=200&q=80"}
-                            alt={`${c.vehicle.brand} ${c.vehicle.model}`}
-                            className="w-16 h-12 object-cover rounded-lg shrink-0 bg-neutral-100"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="font-bold text-xs truncate text-foreground">
-                              {c.vehicle.brand} {c.vehicle.model}
-                            </div>
-                            <div className="text-[11px] text-blue-600 dark:text-blue-400 font-mono font-bold mt-0.5">
-                              {fmt(getVehicleEffectiveDailyRate(c.vehicle, data.pickupDate))} DT / jour
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCart((prev) => prev.filter((_, i) => i !== idx));
-                              if (activeVehicleIndex >= cart.length - 1) {
-                                setActiveVehicleIndex(Math.max(0, cart.length - 2));
-                              }
-                            }}
-                            className="text-muted-foreground hover:text-red-500 p-1 text-xs rounded transition-colors"
-                            title="Retirer ce véhicule"
+                      {cart.map((c, idx) => {
+                        const minReq = c.vehicle.minRentalDays || (c.vehicle.pricing as any)?.minRentalDays || 1;
+                        const isViolated = rentalDays < minReq;
+                        return (
+                          <div
+                            key={c.vehicle._id + "-" + idx}
+                            className={`flex items-center gap-3 p-3 rounded-xl bg-white dark:bg-neutral-900 border shadow-xs ${
+                              isViolated ? "border-amber-400 dark:border-amber-600" : "border-blue-200 dark:border-blue-800"
+                            }`}
                           >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
+                            <img
+                              src={c.vehicle.images?.[0]?.url || "https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=200&q=80"}
+                              alt={`${c.vehicle.brand} ${c.vehicle.model}`}
+                              className="w-16 h-12 object-cover rounded-lg shrink-0 bg-neutral-100"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="font-bold text-xs truncate text-foreground">
+                                {c.vehicle.brand} {c.vehicle.model}
+                              </div>
+                              <div className="text-[11px] text-blue-600 dark:text-blue-400 font-mono font-bold mt-0.5">
+                                {fmt(getVehicleEffectiveDailyRate(c.vehicle, data.pickupDate))} DT / jour
+                              </div>
+                              {isViolated && (
+                                <div className="text-[10px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
+                                  ⚠️ {locale === "ar" ? `الحد الأدنى: ${minReq} أيام` : locale === "en" ? `Min. ${minReq} days required` : `Min. ${minReq} jours requis`}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCart((prev) => prev.filter((_, i) => i !== idx));
+                                if (activeVehicleIndex >= cart.length - 1) {
+                                  setActiveVehicleIndex(Math.max(0, cart.length - 2));
+                                }
+                              }}
+                              className="text-muted-foreground hover:text-red-500 p-1 text-xs rounded transition-colors"
+                              title="Retirer ce véhicule"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
 
                     {/* Button to toggle viewing full fleet */}
@@ -1252,6 +1301,8 @@ function BookingContent() {
                         const isSelected = inCartCount > 0;
                         const maxAvail = v.availableUnits !== undefined ? v.availableUnits : 5;
                         const canAddMore = inCartCount < maxAvail;
+                        const vMinDays = v.minRentalDays || (v.pricing as any)?.minRentalDays || 1;
+                        const isMinViolated = rentalDays < vMinDays;
 
                         return (
                           <div
@@ -1270,13 +1321,28 @@ function BookingContent() {
                               />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
                                 <h4 className="font-bold text-base text-foreground">
                                   {v.brand} {v.model}
                                 </h4>
                                 {inCartCount > 0 && (
                                   <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-600 text-white">
                                     {inCartCount} dans le panier
+                                  </span>
+                                )}
+                                {vMinDays > 1 && (
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                                      isMinViolated
+                                        ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                                        : "bg-slate-100 text-slate-700 dark:bg-neutral-800 dark:text-neutral-300 border-slate-200 dark:border-neutral-700"
+                                    }`}
+                                  >
+                                    {locale === "ar"
+                                      ? `الحد الأدنى: ${vMinDays} أيام`
+                                      : locale === "en"
+                                      ? `Min. ${vMinDays} days`
+                                      : `Min. ${vMinDays} jours`}
                                   </span>
                                 )}
                               </div>
@@ -1329,6 +1395,11 @@ function BookingContent() {
                                 <div className="text-[11px] text-muted-foreground">
                                   {locale === "ar" ? "/ يوم شامل" : locale === "en" ? "/ day incl. tax" : "/ jour TTC"}
                                 </div>
+                                {isMinViolated && inCartCount === 0 && (
+                                  <div className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold mt-0.5">
+                                    {locale === "ar" ? `يتطلب ${vMinDays} أيام` : locale === "en" ? `Min. ${vMinDays} days req.` : `Min. ${vMinDays} j requis`}
+                                  </div>
+                                )}
                               </div>
                               <div className="flex items-center gap-1.5">
                                 {inCartCount > 0 ? (
@@ -1345,7 +1416,7 @@ function BookingContent() {
                                     >
                                       - Retirer
                                     </button>
-                                    {canAddMore && (
+                                    {canAddMore && !isMinViolated && (
                                       <button
                                         type="button"
                                         onClick={() => {
@@ -1357,6 +1428,15 @@ function BookingContent() {
                                       </button>
                                     )}
                                   </>
+                                ) : isMinViolated ? (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-neutral-800 text-muted-foreground text-xs font-semibold cursor-not-allowed opacity-75 border border-dashed border-slate-300 dark:border-neutral-700"
+                                    title={locale === "ar" ? `الحد الأدنى للحجز هو ${vMinDays} أيام (أنت حددت ${rentalDays} يوم)` : locale === "en" ? `Minimum rental is ${vMinDays} days (selected: ${rentalDays} days)` : `Durée minimale de location : ${vMinDays} jours (sélection actuelle : ${rentalDays} j)`}
+                                  >
+                                    {locale === "ar" ? `الحد الأدنى ${vMinDays} أيام` : locale === "en" ? `Min. ${vMinDays} days` : `Min. ${vMinDays} j requis`}
+                                  </button>
                                 ) : (
                                   <button
                                     type="button"
