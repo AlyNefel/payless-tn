@@ -116,7 +116,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.5);
-  doc.text("FACTURE / BON DE RÉSERVATION", metaBoxX + metaBoxWidth / 2, metaBoxY + 5, { align: "center" });
+  doc.text("BON DE RÉSERVATION", metaBoxX + metaBoxWidth / 2, metaBoxY + 5, { align: "center" });
 
   // Body of Meta Box (Bordered Table Grid)
   doc.setDrawColor(0, 0, 0);
@@ -251,11 +251,6 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   doc.text("Kilométrage :", rightX + 3, rightY + 15);
   doc.setFont("helvetica", "normal");
   doc.text("Illimité sur toute la Tunisie", rightX + 28, rightY + 15);
-
-  doc.setFont("helvetica", "bold");
-  doc.text("Garanties :", rightX + 3, rightY + 20);
-  doc.setFont("helvetica", "normal");
-  doc.text("Tous Risques avec Franchise Incluse", rightX + 28, rightY + 20);
 
   y += colHeight + 3.5;
 
@@ -394,7 +389,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
               ? extra.lineTotal
               : extraLineTotal(extra.price || 0, extra.quantity, vItem.rentalDuration || data.rentalDuration, extra.pricingType);
           invoiceRows.push({
-            desc: `Option & Équipement — ${extra.name} (${vItem.brand} ${vItem.model})`,
+            desc: isMultiCar ? `${extra.name} (${vItem.brand} ${vItem.model})` : extra.name,
             qty: `x${extra.quantity}`,
             unitPrice: typeof extra.price === "number" ? (extra.price / 100).toFixed(2) : "-",
             total: (lineTotal / 100).toFixed(2),
@@ -403,7 +398,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
         });
       } else if (vItem.extrasTotal && vItem.extrasTotal > 0) {
         invoiceRows.push({
-          desc: `Options & Équipements (${vItem.brand} ${vItem.model})`,
+          desc: isMultiCar ? `Options & Équipements (${vItem.brand} ${vItem.model})` : "Options & Équipements",
           qty: "1 forfait",
           unitPrice: (vItem.extrasTotal / 100).toFixed(2),
           total: (vItem.extrasTotal / 100).toFixed(2),
@@ -425,7 +420,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
             ? extra.lineTotal
             : extraLineTotal(extra.price || 0, extra.quantity, data.rentalDuration, extra.pricingType);
         invoiceRows.push({
-          desc: `Option & Équipement — ${extra.name}`,
+          desc: extra.name,
           qty: `x${extra.quantity}`,
           unitPrice: typeof extra.price === "number" ? (extra.price / 100).toFixed(2) : "-",
           total: (lineTotal / 100).toFixed(2),
@@ -559,40 +554,11 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   const totalBoxWidth = 86;
   const totalBoxX = pageWidth - marginRight - totalBoxWidth;
 
-  doc.setDrawColor(0, 0, 0);
-  doc.setLineWidth(0.3);
-
-  // Subtotal row
-  doc.rect(totalBoxX, y, totalBoxWidth, 6, "D");
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8);
-  doc.setTextColor(0, 0, 0);
-  doc.text("Sous-total Hors Taxes (HT) :", totalBoxX + 3, y + 4.2);
-  doc.text(`${(data.subtotal / 100).toFixed(2)} ${currency}`, totalBoxX + totalBoxWidth - 3, y + 4.2, {
-    align: "right",
-  });
-  y += 6;
-
-  // Taxes & fees row
-  const feesAndTaxes =
-    (data.pickupLocationFee || 0) +
-    (data.returnLocationFee || 0) +
-    (data.outOfTownFee || 0) +
-    (data.differentLocationFee || 0) +
-    (data.timbreFiscal || 0) +
-    (data.contributionLF2026 || 0);
-
-  doc.rect(totalBoxX, y, totalBoxWidth, 6, "D");
-  doc.text("Taxes, Timbres & Frais de livraison :", totalBoxX + 3, y + 4.2);
-  doc.text(`${(feesAndTaxes / 100).toFixed(2)} ${currency}`, totalBoxX + totalBoxWidth - 3, y + 4.2, {
-    align: "right",
-  });
-  y += 6;
-
   // TOTAL TTC ROW (SOLID BLACK BACKGROUND WITH WHITE TEXT)
   doc.setFillColor(0, 0, 0);
   doc.rect(totalBoxX, y, totalBoxWidth, 9, "F");
   doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.3);
   doc.rect(totalBoxX, y, totalBoxWidth, 9, "D");
 
   doc.setTextColor(255, 255, 255);
@@ -615,7 +581,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
     doc.setFontSize(8);
     doc.setTextColor(0, 0, 0);
     doc.text(
-      `Dépôt de garantie / Caution : ${(data.depositAmount / 100).toFixed(2)} ${currency} (empreinte bancaire non débitée, restituée au retour).`,
+      `Dépôt de garantie / Caution : ${(data.depositAmount / 100).toFixed(2)} ${currency} (empreinte bancaire non débitée, restituée au retour) ou par Cash.`,
       marginLeft + 3,
       y + 4.7
     );

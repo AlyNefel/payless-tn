@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
       customerId: cust?._id?.toString(),
       attachments: [
         {
-          filename: `Payless-Facture-${booking.bookingReference}.pdf`,
+          filename: `Payless-Reservation-${booking.bookingReference}.pdf`,
           content: pdfBuffer,
           contentType: "application/pdf",
         },

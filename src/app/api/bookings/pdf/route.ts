@@ -143,7 +143,7 @@ export async function GET(request: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="Payless-Facture-${booking.bookingReference}.pdf"`,
+        "Content-Disposition": `inline; filename="Payless-Reservation-${booking.bookingReference}.pdf"`,
         "Cache-Control": "private, no-store",
         "X-Robots-Tag": "noindex",
       },
