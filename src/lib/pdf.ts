@@ -637,38 +637,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   y += termsBoxHeight + 5;
 
   // ==========================================
-  // 6. SIGNATURES (TWO BORDERED RECTANGLES)
-  // ==========================================
-  const sigBoxW = (contentWidth - 6) / 2;
-  const sigBoxH = 20;
-
-  // Customer signature box
-  doc.setDrawColor(0, 0, 0);
-  doc.setLineWidth(0.3);
-  doc.rect(marginLeft, y, sigBoxW, sigBoxH, "D");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  doc.setTextColor(0, 0, 0);
-  doc.text("Signature du Client / Conducteur :", marginLeft + 3, y + 4.5);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(6.5);
-  doc.setTextColor(90, 90, 90);
-  doc.text('(Mention manuscrite "Lu et approuvé")', marginLeft + 3, y + 8);
-
-  // Agency signature box
-  const agSigX = marginLeft + sigBoxW + 6;
-  doc.rect(agSigX, y, sigBoxW, sigBoxH, "D");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  doc.setTextColor(0, 0, 0);
-  doc.text(`Cachet & Signature — ${agencyName} :`, agSigX + 3, y + 4.5);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(6.5);
-  doc.setTextColor(90, 90, 90);
-  doc.text("(Validation et enregistrement officiel de la réservation)", agSigX + 3, y + 8);
-
-  // ==========================================
-  // 7. FOOTER
+  // 6. FOOTER
   // ==========================================
   doc.setDrawColor(0, 0, 0);
   doc.setLineWidth(0.2);
