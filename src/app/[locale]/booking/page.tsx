@@ -17,10 +17,6 @@ import { DEFAULT_ZONES, matchZone, type ZoneFeeConfig } from "@/lib/locationFees
 import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate } from "@/lib/seasonalPricing";
 import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected } from "@/lib/extras";
 import { OptionIcon } from "@/components/ui/OptionIcon";
-import {
-  getVehicleFuelLabel,
-  getVehicleTransmissionLabel,
-} from "@/lib/vehicleTranslations";
 
 /** Indicative EUR conversion shown next to the TND total (1 EUR ≈ 3.35 TND). */
 const TND_PER_EUR = 3.35;
@@ -1679,44 +1675,30 @@ function BookingContent() {
                       {cart.map((cItem, cIdx) => (
                         <div
                           key={cItem.vehicle._id + "-" + cIdx}
-                          className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-3.5 rounded-xl bg-white dark:bg-neutral-900 border border-border/80"
+                          className="flex flex-col sm:flex-row items-center gap-4 p-3.5 rounded-xl bg-white dark:bg-neutral-900 border border-border/80"
                         >
-                          <img
-                            src={
-                              cItem.vehicle.images?.find((i) => i.isPrimary)?.url ||
-                              cItem.vehicle.images?.[0]?.url ||
-                              "https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=400&q=80"
-                            }
-                            alt=""
-                            className="w-full sm:w-28 h-20 object-cover rounded-xl bg-neutral-200 dark:bg-neutral-700 shrink-0"
-                          />
-                          <div className="flex-1 space-y-1 min-w-0">
+                          <div className="w-full sm:w-44 h-36 sm:h-28 rounded-xl bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-100 dark:border-neutral-700/60 p-2 flex items-center justify-center shrink-0">
+                            <img
+                              src={
+                                cItem.vehicle.images?.find((i) => i.isPrimary)?.url ||
+                                cItem.vehicle.images?.[0]?.url ||
+                                "https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=400&q=80"
+                              }
+                              alt={`${cItem.vehicle.brand} ${cItem.vehicle.model}`}
+                              className="w-full h-full object-contain"
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0 w-full space-y-2">
                             <div className="flex items-center gap-2">
-                              <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 text-[10px] font-bold">
+                              <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 text-[10px] font-bold shrink-0">
                                 #{cIdx + 1}
                               </span>
-                              <div className="font-extrabold text-base text-foreground truncate">
+                              <div className="font-extrabold text-base sm:text-lg text-foreground truncate">
                                 {cItem.vehicle.brand} {cItem.vehicle.model}
                               </div>
                             </div>
-                            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                              <span className="px-2 py-0.5 rounded-md bg-neutral-200/70 dark:bg-neutral-700/70 text-[11px]">
-                                {locale === "fr" ? "Boîte " : ""}
-                                {getVehicleTransmissionLabel(cItem.vehicle.transmission, locale)}
-                              </span>
-                              <span className="px-2 py-0.5 rounded-md bg-neutral-200/70 dark:bg-neutral-700/70 text-[11px]">
-                                {cItem.vehicle.seats} {locale === "ar" ? "مقاعد" : locale === "en" ? "seats" : "places"}
-                              </span>
-                              <span className="px-2 py-0.5 rounded-md bg-neutral-200/70 dark:bg-neutral-700/70 text-[11px]">
-                                {locale === "ar" ? "الوقود: " : locale === "en" ? "Fuel: " : "Carburant : "}
-                                {getVehicleFuelLabel(cItem.vehicle.fuelType, locale)}
-                              </span>
-                              <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold text-[11px]">
-                                ✓ Kilométrage Illimité
-                              </span>
-                            </div>
                             {onlySelected(cItem.extras).length > 0 && (
-                              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                              <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                                 {onlySelected(cItem.extras).map((ex) => {
                                   const item = availableExtras.find((e) => e._id === ex.id);
                                   if (!item) return null;
@@ -1734,12 +1716,14 @@ function BookingContent() {
                               </div>
                             )}
                           </div>
-                          <div className="text-right sm:border-l sm:border-border sm:dark:border-neutral-700 sm:pl-4 shrink-0">
+                          <div className="w-full sm:w-auto flex sm:flex-col items-center sm:items-end justify-between sm:justify-center pt-2.5 sm:pt-0 border-t sm:border-t-0 sm:border-l border-border/80 dark:border-neutral-700 sm:pl-4 shrink-0">
                             <div className="text-xs text-muted-foreground">Tarif journalier</div>
-                            <div className="text-lg font-bold text-blue-700 dark:text-blue-400">
-                              {fmt(cItem.vehicle.pricing?.daily)} {currencySymbol}
+                            <div className="flex sm:block items-baseline gap-1 text-right">
+                              <span className="text-lg font-bold text-blue-700 dark:text-blue-400">
+                                {fmt(cItem.vehicle.pricing?.daily)} {currencySymbol}
+                              </span>
+                              <span className="text-[11px] text-muted-foreground ml-1 sm:ml-0 sm:block">/ jour TTC</span>
                             </div>
-                            <div className="text-[11px] text-muted-foreground">/ jour TTC</div>
                           </div>
                         </div>
                       ))}
