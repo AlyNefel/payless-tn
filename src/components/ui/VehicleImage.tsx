@@ -2,7 +2,7 @@
 
 import Image, { type ImageProps } from "next/image";
 import { useState } from "react";
-import { cloudinaryLoader, isCloudinaryUrl } from "@/lib/cloudinaryUrl";
+import { cloudinaryLoader, fullResImageUrl, isCloudinaryUrl } from "@/lib/cloudinaryUrl";
 
 export const VEHICLE_PLACEHOLDER = "/images/vehicle-placeholder.svg";
 
@@ -20,7 +20,7 @@ type Props = Omit<ImageProps, "src" | "loader"> & {
  */
 export function VehicleImage({ src, alt, sizes, ...rest }: Props) {
   const [failed, setFailed] = useState(false);
-  const url = !src || failed ? VEHICLE_PLACEHOLDER : src;
+  const url = !src || failed ? VEHICLE_PLACEHOLDER : fullResImageUrl(src);
   const cloudinary = isCloudinaryUrl(url);
   const isLocal = url.startsWith("/");
 

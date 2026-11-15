@@ -58,3 +58,15 @@ export interface SelectedExtraLike {
 export function onlySelected<T extends SelectedExtraLike>(extras: T[] | undefined | null): T[] {
   return (extras || []).filter((e) => (e?.quantity ?? 0) > 0);
 }
+
+/**
+ * "Amount" options (e.g. prepaid fuel): the customer picks an amount on a slider.
+ * Snaps to the configured step and clamps to [min, max] (all in minor units).
+ */
+export function snapAmount(amount: number, min: number, max: number, step: number): number {
+  const lo = Math.max(0, Math.round(min || 0));
+  const hi = Math.max(lo, Math.round(max || lo));
+  const st = Math.max(1, Math.round(step || 1));
+  const n = Math.round(((Number(amount) || lo) - lo) / st) * st + lo;
+  return Math.min(hi, Math.max(lo, n));
+}

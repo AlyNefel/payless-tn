@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireManager } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
  * We proxy through this route so the admin token never leaves the server.
  */
 export async function GET(request: NextRequest) {
-  const guard = await requireManager();
+  const guard = await requirePermission("settings", "view");
   if (!guard.ok) return guard.response;
 
   const { searchParams } = new URL(request.url);

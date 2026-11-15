@@ -3,9 +3,10 @@ import connectDB from "@/lib/db";
 import EmailLog from "@/models/EmailLog";
 import { sendEmail } from "@/lib/email";
 import { requireStaff } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
 export async function GET(request: NextRequest) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("emails", "view");
   if (!guard.ok) return guard.response;
 
   try {
@@ -70,7 +71,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("emails", "edit");
   if (!guard.ok) return guard.response;
 
   try {

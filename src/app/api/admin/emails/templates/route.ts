@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import EmailTemplate from "@/models/EmailTemplate";
 import { requireStaff } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
 const DEFAULT_TEMPLATES = [
   {
@@ -289,7 +290,7 @@ Contact assistance : {{agencyPhone}}`
 ];
 
 export async function GET(request: NextRequest) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("emails", "view");
   if (!guard.ok) return guard.response;
 
   try {
@@ -329,7 +330,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("emails", "edit");
   if (!guard.ok) return guard.response;
 
   try {

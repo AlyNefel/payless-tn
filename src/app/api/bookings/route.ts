@@ -18,7 +18,7 @@ import {
   formatDate,
 } from "@/lib/utils";
 import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
-import { computeRentalDays, extraLineTotal, normalizePricingType, type ExtraPricingType } from "@/lib/extras";
+import { computeRentalDays, extraLineTotal, normalizePricingType, snapAmount, type ExtraPricingType } from "@/lib/extras";
 import { sendEmail, buildBookingConfirmationEmail } from "@/lib/email";
 import { generateBookingPDF } from "@/lib/pdf";
 import { sendBookingWhatsAppNotification } from "@/lib/whatsapp";
@@ -28,6 +28,9 @@ import { sanitizeBookingForClient } from "@/lib/sanitize";
 import { escapeRegex, isStaffRequest } from "@/lib/apiAuth";
 import { canAccessBooking } from "@/lib/bookingAccess";
 import { withExtraIcons } from "@/lib/extrasServer";
+import { autoAssignUnits } from "@/lib/fleetUnits";
+import { effectiveMinDays, getGlobalMinRentalDays } from "@/lib/rentalRules";
+import { notifyStaff } from "@/lib/notify";
 import { z } from "zod";
 import mongoose from "mongoose";
 
@@ -44,6 +47,8 @@ const createBookingSchema = z.object({
             z.object({
               extraId: z.string().min(1),
               quantity: z.number().int().min(1).default(1),
+              /** Amount options (e.g. fuel): chosen amount in minor units. */
+              amount: z.number().int().min(0).max(10_000_000).optional(),
             })
           )
           .optional()
@@ -66,6 +71,7 @@ const createBookingSchema = z.object({
       z.object({
         extraId: z.string().min(1),
         quantity: z.number().int().min(1).default(1),
+        amount: z.number().int().min(0).max(10_000_000).optional(),
       })
     )
     .optional()
@@ -263,6 +269,7 @@ export async function POST(request: NextRequest) {
       extrasTotal: number;
     }> = [];
 
+    const globalMinDays = await getGlobalMinRentalDays();
     for (const vInput of vehicleListInputs) {
       // Never substitute another vehicle: the customer books the exact model they selected.
       const vDoc = mongoose.Types.ObjectId.isValid(vInput.vehicleId)
@@ -279,8 +286,8 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Minimum rental period check
-      const requiredMinDays = vDoc.minRentalDays || vDoc.pricing?.minRentalDays || 1;
+      // Minimum rental period check (fleet-wide minimum or the vehicle's own, whichever is higher)
+      const requiredMinDays = effectiveMinDays(vDoc, globalMinDays);
       if (rentalDays < requiredMinDays) {
         return NextResponse.json(
           {
@@ -316,14 +323,39 @@ export async function POST(request: NextRequest) {
 
       // Merge duplicate lines for the same option, ignore zero quantities.
       const requested = new Map<string, number>();
+      const requestedAmount = new Map<string, number>();
       for (const item of vInput.extras || []) {
         if (!mongoose.Types.ObjectId.isValid(item.extraId) || !(item.quantity > 0)) continue;
         requested.set(item.extraId, (requested.get(item.extraId) || 0) + item.quantity);
+        if (typeof (item as { amount?: number }).amount === "number") {
+          requestedAmount.set(item.extraId, (item as { amount?: number }).amount as number);
+        }
       }
 
       if (requested.size > 0) {
         const extraDocs = await Extra.find({ _id: { $in: [...requested.keys()] }, isActive: true });
         for (const extraDoc of extraDocs) {
+          // Amount option (prepaid fuel…): one line, price = amount chosen on the slider (validated server-side).
+          if (extraDoc.selectionMode === "amount") {
+            const amount = snapAmount(
+              requestedAmount.get(String(extraDoc._id)) ?? extraDoc.amountMin ?? 0,
+              extraDoc.amountMin ?? 0,
+              extraDoc.amountMax ?? 0,
+              extraDoc.amountStep ?? 1
+            );
+            if (amount <= 0) continue;
+            vExtrasTotal += amount;
+            vBookingExtras.push({
+              extraId: extraDoc._id,
+              name: `${extraDoc.name[customerLanguage] || extraDoc.name.fr || extraDoc.name.en} (${(amount / 100).toLocaleString("fr-FR")} DT)`,
+              price: amount,
+              quantity: 1,
+              icon: extraDoc.icon,
+              pricingType: "per_rental",
+              lineTotal: amount,
+            });
+            continue;
+          }
           const qty = Math.min(requested.get(String(extraDoc._id)) || 1, extraDoc.maxQuantity || 5);
           const pricingType = normalizePricingType(extraDoc.pricingType);
           const lineTotal = extraLineTotal(extraDoc.price, qty, rentalDays, pricingType);
@@ -582,6 +614,9 @@ export async function POST(request: NextRequest) {
 
     const vehicleTitle = processedVehicles.map((pv) => `${pv.vehicle.brand} ${pv.vehicle.model}`).join(" + ");
 
+    // Counter / phone bookings created from the back-office.
+    const staffCreated = await isStaffRequest();
+
     const booking = await Booking.create({
       bookingReference,
       customerId: customer._id,
@@ -612,7 +647,7 @@ export async function POST(request: NextRequest) {
       customerLanguage,
       internalNotes: "Réservation confirmée automatiquement par le système. Véhicule garanti.",
       customerNotes: customerNotes || "",
-      isManualBooking: false,
+      isManualBooking: staffCreated,
       auditHistory: [
         {
           action: "auto_confirmed",
@@ -640,6 +675,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Auto-assign a physical car (license plate) of each booked model. The admin can change it later.
+    let assignedPlates = "";
+    try {
+      const assigned = await autoAssignUnits(String(booking._id));
+      assignedPlates = assigned.map((a) => a.licensePlate || "immat. à saisir").join(", ");
+    } catch (assignErr) {
+      console.error("Auto unit assignment failed:", assignErr);
+    }
+
     // Record coupon usage
     if (appliedCouponCode) {
       await Coupon.findOneAndUpdate(
@@ -657,43 +701,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 11. Create Notifications for Administrators
+    // 11. Real-time notification for the back-office
     try {
-      const admins = await User.find({
-        role: { $in: ["superadmin", "admin"] },
-        isActive: true,
-      }).select("_id");
-
       const vehicleTitle = `${vehicle.brand} ${vehicle.model}`;
       const customerFullName = `${customer.firstName} ${customer.lastName}`;
-
-      const notifPromises = admins.map((admin) =>
-        Notification.create({
-          recipientId: admin._id,
-          recipientType: "user",
-          type: "new_booking",
-          title: {
-            fr: `Réservation confirmée - ${bookingReference}`,
-            en: `Confirmed Booking - ${bookingReference}`,
-            ar: `حجز مؤكد تلقائياً - ${bookingReference}`,
-          },
-          message: {
-            fr: `${customerFullName} a réservé ${vehicleTitle} du ${formatDate(pickupDate, "fr-FR")} au ${formatDate(returnDate, "fr-FR")}. Confirmée automatiquement.`,
-            en: `${customerFullName} booked ${vehicleTitle} from ${formatDate(pickupDate, "en-US")} to ${formatDate(returnDate, "en-US")}. Auto-confirmed.`,
-            ar: `قام ${customerFullName} بحجز ${vehicleTitle} من ${formatDate(pickupDate, "ar-TN")} إلى ${formatDate(returnDate, "ar-TN")}. تم التأكيد الفوري.`,
-          },
-          link: `/admin/bookings/${booking._id}`,
-          isRead: false,
-          data: {
-            bookingId: booking._id.toString(),
-            bookingReference,
-            totalAmount,
-            vehicle: vehicleTitle,
-          },
-        })
-      );
-
-      await Promise.all(notifPromises);
+      const plateFr = assignedPlates ? ` (véhicule ${assignedPlates})` : " (aucun véhicule libre à assigner — à vérifier)";
+      const plateEn = assignedPlates ? ` (car ${assignedPlates})` : " (no free car to assign — check)";
+      await notifyStaff({
+        type: "new_booking",
+        severity: assignedPlates ? "info" : "warning",
+        title: {
+          fr: `Nouvelle réservation - ${bookingReference}`,
+          en: `New booking - ${bookingReference}`,
+          ar: `حجز جديد - ${bookingReference}`,
+        },
+        message: {
+          fr: `${customerFullName} a réservé ${vehicleTitle}${plateFr} du ${formatDate(pickupDate, "fr-FR")} au ${formatDate(returnDate, "fr-FR")}.`,
+          en: `${customerFullName} booked ${vehicleTitle}${plateEn} from ${formatDate(pickupDate, "en-US")} to ${formatDate(returnDate, "en-US")}.`,
+          ar: `قام ${customerFullName} بحجز ${vehicleTitle} من ${formatDate(pickupDate, "ar-TN")} إلى ${formatDate(returnDate, "ar-TN")}.`,
+        },
+        link: `/admin/bookings/${booking._id}`,
+        data: {
+          bookingId: booking._id.toString(),
+          bookingReference,
+          totalAmount,
+          vehicle: vehicleTitle,
+          licensePlate: assignedPlates,
+        },
+      });
     } catch (notifErr) {
       console.error("Failed to generate admin notifications:", notifErr);
     }
@@ -835,7 +870,7 @@ export async function POST(request: NextRequest) {
       `🚗 *Payless Car Rental Tunisie — Confirmation de Réservation*\n\n` +
       `Bonjour *${customer.firstName} ${customer.lastName}*,\n` +
       `Votre réservation *${bookingReference}* est ✅ *Confirmée Instantanément* !\n\n` +
-      `• *Véhicule* : ${vehicle.brand} ${vehicle.model}\n` +
+      `• *Véhicule* : ${vehicle.brand} ${vehicle.model}${assignedPlates ? ` (${assignedPlates})` : ""}\n` +
       `• *Prise en charge* : ${formatDate(pickupDate, "fr-FR")} (${pickupLocName})\n` +
       `• *Restitution* : ${formatDate(returnDate, "fr-FR")} (${returnLocName})\n` +
       `• *Durée* : ${rentalDays} jour(s)\n` +
@@ -877,6 +912,8 @@ export async function POST(request: NextRequest) {
         success: true,
         message: "Réservation confirmée automatiquement avec succès.",
         bookingReference,
+        bookingId: String(booking._id),
+        assignedPlates,
         booking: clientSafeBooking,
         whatsappUrl,
         pdfUrl: `/api/bookings/pdf?ref=${bookingReference}&email=${encodeURIComponent(customer.email)}`,

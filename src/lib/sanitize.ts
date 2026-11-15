@@ -22,6 +22,8 @@ export function sanitizeVehicleForClient<T extends Record<string, any>>(vehicle:
   delete sanitized.maintenanceNotes;
   delete sanitized.technicalInspectionDate;
   delete sanitized.insuranceInfo;
+  // Physical cars (plates, mileage, maintenance) are back-office data.
+  delete sanitized.units;
 
   return sanitized;
 }

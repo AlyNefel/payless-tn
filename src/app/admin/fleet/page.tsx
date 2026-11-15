@@ -24,7 +24,7 @@ import {
   AlertCircle,
   Save,
 } from "lucide-react";
-import { VehicleItem, MOCK_LOCATIONS } from "../mockData";
+import { VehicleItem } from "../mockData";
 import { VehicleImageManager, newImageKey, type ManagedImage } from "@/components/admin/VehicleImageManager";
 import { cloudinaryUrl } from "@/lib/cloudinaryUrl";
 
@@ -42,7 +42,17 @@ type FleetVehicle = Omit<VehicleItem, "category"> & {
   luggageCapacity: number;
   totalUnits: number;
   minRentalDays?: number;
+  units: FleetUnitRow[];
+  locationId: string;
 };
+
+/** One physical car (plate) of the model, as edited in the form. */
+interface FleetUnitRow {
+  _id?: string;
+  licensePlate: string;
+  status: "active" | "maintenance" | "out_of_service";
+  mileage?: number;
+}
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
@@ -293,6 +303,12 @@ export default function AdminFleetPage() {
             doors: v.doors,
             luggageCapacity: v.luggageCapacity ?? 2,
             totalUnits: v.totalUnits ?? 1,
+            units: (v.units || []).map((u: any) => ({
+              _id: u._id,
+              licensePlate: u.licensePlate || "",
+              status: u.status || "active",
+              mileage: u.mileage || 0,
+            })),
             pricing: {
               daily: tnd(v.pricing?.daily),
               weekly: tnd(v.pricing?.weekly),
@@ -307,6 +323,7 @@ export default function AdminFleetPage() {
             images: v.images || [],
             imageUrl: v.images?.find((i: any) => i.isPrimary)?.url || v.images?.[0]?.url || "",
             location: v.location?.name?.fr || "Flotte centrale",
+            locationId: String(v.location?._id || v.location || ""),
             features: v.features || [],
           }))
         );
@@ -343,6 +360,14 @@ export default function AdminFleetPage() {
   const [editingVehicle, setEditingVehicle] = useState<FleetVehicle | null>(null);
   const [formTab, setFormTab] = useState("model");
   const [formData, setFormData] = useState<FullVehicleFormData>(DEFAULT_FORM);
+  const [unitRows, setUnitRows] = useState<FleetUnitRow[]>([{ licensePlate: "", status: "active" }]);
+  const [agencyLocations, setAgencyLocations] = useState<{ _id: string; name?: { fr?: string }; city?: string }[]>([]);
+  useEffect(() => {
+    fetch("/api/admin/locations")
+      .then((r) => r.json())
+      .then((d) => setAgencyLocations(Array.isArray(d.locations) ? d.locations : []))
+      .catch(() => {});
+  }, []);
 
   // Stats
   const totalCount = vehicles.length;
@@ -394,6 +419,7 @@ export default function AdminFleetPage() {
   const openAddModal = () => {
     setEditingVehicle(null);
     setFormData({ ...DEFAULT_FORM, categoryId: categories[0]?._id || "" });
+    setUnitRows([{ licensePlate: "", status: "active" }]);
     setImages([]);
     setSessionUploads([]);
     setFormTab("model");
@@ -420,6 +446,7 @@ export default function AdminFleetPage() {
       minRentalDays: car.minRentalDays || 1,
       fixedDeposit: car.pricing.deposit,
       licensePlate: car.licensePlate,
+      pickupLocationIds: car.locationId ? [car.locationId] : [],
       color: car.color,
       year: car.year,
       mileage: car.mileage,
@@ -434,6 +461,14 @@ export default function AdminFleetPage() {
         powerSteering: has("Power Steering"),
       },
     });
+    setUnitRows(
+      car.units.length > 0
+        ? car.units
+        : Array.from({ length: Math.max(1, car.totalUnits || 1) }, (_, i) => ({
+            licensePlate: i === 0 ? car.licensePlate : "",
+            status: "active" as const,
+          }))
+    );
     setImages(
       car.images.map((img) => ({ key: newImageKey(), url: img.url, publicId: img.publicId || "", alt: img.alt }))
     );
@@ -496,10 +531,16 @@ export default function AdminFleetPage() {
       seats: formData.passengerSeats,
       doors: formData.doors,
       luggageCapacity: formData.maximumLuggage,
-      licensePlate: formData.licensePlate.trim(),
+      licensePlate: (unitRows.find((u) => u.licensePlate.trim())?.licensePlate || formData.licensePlate).trim(),
       mileage: formData.mileage,
+      location: formData.pickupLocationIds[0] || null,
+      units: unitRows.map((u) => ({
+        ...(u._id ? { _id: u._id } : {}),
+        licensePlate: u.licensePlate.trim().toUpperCase(),
+        status: u.status,
+      })),
       color: formData.color,
-      totalUnits: formData.totalCarsInGarage,
+      totalUnits: Math.max(1, unitRows.filter((u) => u.status === "active").length),
       minRentalDays: formData.minRentalDays || 1,
       features,
       // Entered in TND; the API converts to minor units.
@@ -513,8 +554,14 @@ export default function AdminFleetPage() {
     };
 
     if (!payload.licensePlate) {
-      alert("L'immatriculation est obligatoire.");
-      setFormTab("model");
+      alert("Saisissez au moins une immatriculation (onglet Flotte & Agences).");
+      setFormTab("fleet");
+      return;
+    }
+    const plates = payload.units.map((u) => u.licensePlate).filter(Boolean);
+    if (new Set(plates).size !== plates.length) {
+      alert("Deux véhicules ne peuvent pas avoir la même immatriculation.");
+      setFormTab("fleet");
       return;
     }
 
@@ -548,9 +595,9 @@ export default function AdminFleetPage() {
     }
   };
 
-  const locationOptions = MOCK_LOCATIONS.map((l) => ({
-    value: l.id,
-    label: `${l.code} — ${l.name}`,
+  const locationOptions = agencyLocations.map((l) => ({
+    value: l._id,
+    label: `${l.name?.fr || l.city}${l.city ? ` (${l.city})` : ""}`,
   }));
 
   const setFeature = (key: keyof CarFeatures, value: boolean) => {
@@ -1241,13 +1288,17 @@ export default function AdminFleetPage() {
                       <div className="grid grid-cols-3 gap-3">
                         <div>
                           <label className="block text-slate-600 dark:text-slate-400 font-semibold mb-1">
-                            Immatriculation
+                            Immatriculation (véhicule n°1)
                           </label>
                           <input
                             type="text"
-                            value={formData.licensePlate}
+                            value={unitRows[0]?.licensePlate || ""}
                             onChange={(e) =>
-                              setFormData({ ...formData, licensePlate: e.target.value })
+                              setUnitRows((rows) =>
+                                rows.length
+                                  ? rows.map((r, i) => (i === 0 ? { ...r, licensePlate: e.target.value } : r))
+                                  : [{ licensePlate: e.target.value, status: "active" }]
+                              )
                             }
                             placeholder="12345-A-26"
                             className="w-full rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-3 py-2 text-slate-800 dark:text-white font-mono focus:outline-none focus:border-blue-500"
@@ -1288,29 +1339,62 @@ export default function AdminFleetPage() {
                 {/* ── TAB 2: Fleet & Locations ──────────────────────────── */}
                 {formTab === "fleet" && (
                   <div className="space-y-5">
-                    {/* Total Cars in Garage */}
-                    <div className="flex items-center gap-4">
-                      <label className="w-52 shrink-0 font-semibold text-slate-700 dark:text-slate-300">
-                        Total Cars in Garage:<span className="text-red-500">*</span>
-                      </label>
-                      <div className="relative">
-                        <select
-                          value={formData.totalCarsInGarage}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              totalCarsInGarage: Number(e.target.value),
-                            })
-                          }
-                          className="w-24 appearance-none rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-3 py-2 text-slate-800 dark:text-white focus:outline-none focus:border-blue-500 pr-8"
+                    {/* Physical cars of this model: one row per license plate */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-slate-700 dark:text-slate-300">
+                            Véhicules physiques ({unitRows.length}) — une ligne par immatriculation
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            Les réservations reçoivent automatiquement un véhicule libre de ce modèle ; vous pouvez le changer dans la réservation.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setUnitRows((rows) => [...rows, { licensePlate: "", status: "active" }])}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold shrink-0"
                         >
-                          {Array.from({ length: 20 }, (_, i) => i + 1).map((n) => (
-                            <option key={n} value={n}>
-                              {n}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <Plus className="w-3.5 h-3.5" /> Ajouter
+                        </button>
+                      </div>
+                      <div className="space-y-1.5">
+                        {unitRows.map((u, i) => (
+                          <div key={u._id || `new-${i}`} className="flex items-center gap-2">
+                            <span className="w-6 text-[11px] font-mono text-slate-400 text-right">{i + 1}.</span>
+                            <input
+                              type="text"
+                              value={u.licensePlate}
+                              placeholder="ex. 245 TU 7890"
+                              onChange={(e) =>
+                                setUnitRows((rows) => rows.map((r, j) => (j === i ? { ...r, licensePlate: e.target.value.toUpperCase() } : r)))
+                              }
+                              className="flex-1 min-w-0 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-3 py-2 text-slate-800 dark:text-white font-mono focus:outline-none focus:border-blue-500"
+                            />
+                            <select
+                              value={u.status}
+                              onChange={(e) =>
+                                setUnitRows((rows) =>
+                                  rows.map((r, j) => (j === i ? { ...r, status: e.target.value as FleetUnitRow["status"] } : r))
+                                )
+                              }
+                              className="w-32 rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-2 py-2 text-slate-800 dark:text-white focus:outline-none focus:border-blue-500"
+                            >
+                              <option value="active">En service</option>
+                              <option value="maintenance">Au garage</option>
+                              <option value="out_of_service">Hors service</option>
+                            </select>
+                            <button
+                              type="button"
+                              disabled={unitRows.length <= 1}
+                              onClick={() => setUnitRows((rows) => rows.filter((_, j) => j !== i))}
+                              className="p-2 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-30"
+                              title="Retirer ce véhicule"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
                       </div>
                     </div>
 
@@ -1331,7 +1415,7 @@ export default function AdminFleetPage() {
                           className="w-24 appearance-none rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-3 py-2 text-slate-800 dark:text-white focus:outline-none focus:border-blue-500 pr-8"
                         >
                           {Array.from(
-                            { length: formData.totalCarsInGarage },
+                            { length: Math.max(1, unitRows.length) },
                             (_, i) => i + 1
                           ).map((n) => (
                             <option key={n} value={n}>
@@ -1346,55 +1430,31 @@ export default function AdminFleetPage() {
                       </span>
                     </div>
 
-                    {/* Pick-up Locations */}
-                    <div className="flex items-start gap-4">
-                      <div className="w-52 shrink-0 pt-1">
+                    {/* Home agency (where the cars of this model are based) */}
+                    <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
+                      <div className="sm:w-52 shrink-0 pt-1">
                         <label className="font-semibold text-slate-700 dark:text-slate-300 block">
-                          Pick-up Locations:<span className="text-red-500">*</span>
+                          Agence de rattachement :
                         </label>
                         <p className="text-[10px] text-slate-400 mt-0.5">
-                          (hold SHIFT or CTRL button to select multiple locations)
+                          Les clients peuvent réserver depuis toutes les agences ; ceci indique où le véhicule est basé.
                         </p>
                       </div>
                       <div className="flex-1">
-                        <MultiSelectListbox
-                          options={locationOptions}
-                          selected={formData.pickupLocationIds}
-                          onChange={(vals) =>
-                            setFormData({ ...formData, pickupLocationIds: vals })
+                        <select
+                          value={formData.pickupLocationIds[0] || ""}
+                          onChange={(e) =>
+                            setFormData({ ...formData, pickupLocationIds: e.target.value ? [e.target.value] : [] })
                           }
-                        />
-                        {formData.pickupLocationIds.length > 0 && (
-                          <p className="text-[10px] text-blue-500 mt-1">
-                            {formData.pickupLocationIds.length} agence(s) sélectionnée(s)
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Return Locations */}
-                    <div className="flex items-start gap-4">
-                      <div className="w-52 shrink-0 pt-1">
-                        <label className="font-semibold text-slate-700 dark:text-slate-300 block">
-                          Return Locations:<span className="text-red-500">*</span>
-                        </label>
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          (hold SHIFT or CTRL button to select multiple locations)
-                        </p>
-                      </div>
-                      <div className="flex-1">
-                        <MultiSelectListbox
-                          options={locationOptions}
-                          selected={formData.returnLocationIds}
-                          onChange={(vals) =>
-                            setFormData({ ...formData, returnLocationIds: vals })
-                          }
-                        />
-                        {formData.returnLocationIds.length > 0 && (
-                          <p className="text-[10px] text-blue-500 mt-1">
-                            {formData.returnLocationIds.length} agence(s) sélectionnée(s)
-                          </p>
-                        )}
+                          className="w-full rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-3 py-2 text-slate-800 dark:text-white focus:outline-none focus:border-blue-500"
+                        >
+                          <option value="">— Flotte centrale (aucune agence) —</option>
+                          {locationOptions.map((l) => (
+                            <option key={l.value} value={l.value}>
+                              {l.label}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     </div>
 
@@ -1665,7 +1725,7 @@ export default function AdminFleetPage() {
               </div>
 
               {/* Modal Footer */}
-              <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 rounded-b-2xl">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 rounded-b-2xl">
                 {/* Tab navigator */}
                 <div className="flex items-center gap-2">
                   {FORM_TABS.map((tab, i) => (
@@ -1683,7 +1743,7 @@ export default function AdminFleetPage() {
                   ))}
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                   <button
                     type="button"
                     onClick={closeModal}
@@ -1691,19 +1751,20 @@ export default function AdminFleetPage() {
                   >
                     Annuler
                   </button>
-                  {formTab !== "pricing" ? (
+                  {formTab !== "pricing" && (
                     <button
                       type="button"
                       onClick={() => {
                         const idx = FORM_TABS.findIndex((t) => t.id === formTab);
                         if (idx < FORM_TABS.length - 1) setFormTab(FORM_TABS[idx + 1].id);
                       }}
-                      className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/20 transition-all"
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/40 text-xs font-semibold transition-all"
                     >
                       Suivant
                       <ChevronDown className="w-3.5 h-3.5 -rotate-90" />
                     </button>
-                  ) : (
+                  )}
+                  {(
                     <button
                       type="submit"
                       disabled={savingVehicle}

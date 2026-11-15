@@ -79,6 +79,16 @@ export interface IModificationRequest {
   decisionNotes?: string;
 }
 
+/** Physical car (license plate) assigned to a booked car model. */
+export interface IAssignedUnit {
+  vehicleId: mongoose.Types.ObjectId;
+  unitId?: mongoose.Types.ObjectId;
+  licensePlate: string;
+  auto: boolean;
+  assignedAt: Date;
+  assignedBy?: string;
+}
+
 export interface IBooking extends Document {
   _id: mongoose.Types.ObjectId;
   bookingReference: string;
@@ -104,8 +114,12 @@ export interface IBooking extends Document {
   customerNotes?: string;
   auditHistory: IBookingAudit[];
   modificationRequest?: IModificationRequest;
+  assignedUnits?: IAssignedUnit[];
   pickupRecordedAt?: Date;
   returnRecordedAt?: Date;
+  pickupMileage?: number;
+  returnMileage?: number;
+  extensions?: { previousReturnDate: Date; newReturnDate: Date; extraDays: number; dailyRate: number; amount: number; at: Date; by?: string }[];
   cancellationReason?: string;
   rejectionReason?: string;
   isManualBooking: boolean;
@@ -253,8 +267,31 @@ const BookingSchema = new Schema<IBooking>(
       reason: String,
       decisionNotes: String,
     },
+    assignedUnits: [
+      {
+        vehicleId: { type: Schema.Types.ObjectId, ref: "Vehicle" },
+        unitId: { type: Schema.Types.ObjectId },
+        licensePlate: { type: String, default: "" },
+        auto: { type: Boolean, default: true },
+        assignedAt: { type: Date, default: Date.now },
+        assignedBy: String,
+      },
+    ],
     pickupRecordedAt: Date,
     returnRecordedAt: Date,
+    pickupMileage: Number,
+    returnMileage: Number,
+    extensions: [
+      {
+        previousReturnDate: Date,
+        newReturnDate: Date,
+        extraDays: Number,
+        dailyRate: Number,
+        amount: Number,
+        at: { type: Date, default: Date.now },
+        by: String,
+      },
+    ],
     cancellationReason: String,
     rejectionReason: String,
     isManualBooking: { type: Boolean, default: false },

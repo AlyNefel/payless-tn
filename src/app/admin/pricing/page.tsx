@@ -19,6 +19,7 @@ import {
   TrendingDown,
 } from "lucide-react";
 import Image from "next/image";
+import { GlobalMinRentalCard } from "@/components/admin/GlobalMinRentalCard";
 
 interface SeasonalPeriod {
   name: string;
@@ -246,6 +247,8 @@ export default function AdminPricingPage() {
         </div>
       </div>
 
+
+      <GlobalMinRentalCard />
       {/* Search & Actions Bar */}
       <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div className="relative w-full sm:w-96">

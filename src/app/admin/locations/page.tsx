@@ -27,38 +27,54 @@ import {
   ChevronDown,
   Eye,
 } from "lucide-react";
-import { MOCK_LOCATIONS, INITIAL_VEHICLES, LocationItem, VehicleItem } from "../mockData";
+import type { LocationItem } from "../mockData";
+
+/** Fleet model as needed by the location manager (real data from /api/admin/vehicles). */
+interface LocVehicle {
+  id: string;
+  brand: string;
+  model: string;
+  year: number;
+  licensePlate: string;
+  plates: string[];
+  category: string;
+  pricing: { daily: number };
+  status: string;
+  locationId: string;
+  location: string;
+}
 
 export default function LocationManagerPage() {
-  const [locations, setLocations] = useState<LocationItem[]>(MOCK_LOCATIONS);
-  const [vehicles, setVehicles] = useState<VehicleItem[]>(INITIAL_VEHICLES);
+  const [locations, setLocations] = useState<LocationItem[]>([]);
+  const [vehicles, setVehicles] = useState<LocVehicle[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
+  const [formError, setFormError] = useState("");
+  const [savingForm, setSavingForm] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedLocation, setSelectedLocation] = useState<LocationItem | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [selectedVehicleId, setSelectedVehicleId] = useState("");
-  const [targetLocationName, setTargetLocationName] = useState("");
+  const [targetLocationId, setTargetLocationId] = useState("");
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [editingLocation, setEditingLocation] = useState<LocationItem | null>(null);
   const [viewMode, setViewMode] = useState<"card" | "table">("table");
   const [actionMenuOpenId, setActionMenuOpenId] = useState<string | null>(null);
 
   const handleDeleteLocation = async (id: string, name: string) => {
-    if (!confirm(`Êtes-vous sûr de vouloir supprimer l'agence "${name}" ?`)) return;
+    const based = vehicles.filter((v) => v.locationId === id).length;
+    const warn = based > 0 ? `\n${based} modèle(s) de véhicule y sont rattachés : ils repasseront en flotte centrale.` : "";
+    if (!confirm(`Supprimer l'agence "${name}" ?${warn}`)) return;
+    setActionMenuOpenId(null);
     try {
       const res = await fetch(`/api/admin/locations?id=${id}`, { method: "DELETE" });
-      if (res.ok) {
-        showToast(`Agence "${name}" supprimée avec succès`);
-        loadLocations();
-      } else {
-        setLocations((prev) => prev.filter((l) => l.id !== id));
-        showToast(`Agence "${name}" retirée de la liste`);
-      }
-    } catch {
-      setLocations((prev) => prev.filter((l) => l.id !== id));
-      showToast(`Agence "${name}" retirée`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Suppression refusée");
+      showToast(`Agence "${name}" supprimée`);
+      await Promise.all([loadLocations(), loadVehicles()]);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Erreur", false);
     }
-    setActionMenuOpenId(null);
   };
 
   // Form for new location
@@ -80,10 +96,10 @@ export default function LocationManagerPage() {
     try {
       const res = await fetch("/api/admin/locations");
       const json = await res.json();
-      if (json.success && Array.isArray(json.locations) && json.locations.length > 0) {
+      if (json.success && Array.isArray(json.locations)) {
         const mapped: LocationItem[] = json.locations.map((l: any, i: number) => ({
           id: l._id || `loc-${i}`,
-          code: l.code || (l.name?.fr || l.name || "").substring(0, 3).toUpperCase(),
+          code: l.code || (l.city || l.name?.fr || "").substring(0, 3).toUpperCase(),
           name: typeof l.name === "string" ? l.name : (l.name?.fr || "Agence"),
           city: l.city || "Tunisie",
           address: l.address || "",
@@ -101,17 +117,42 @@ export default function LocationManagerPage() {
         setLocations(mapped);
       }
     } catch (err) {
-      console.warn("Failed to fetch live locations, using fallbacks:", err);
+      console.warn("Failed to fetch locations:", err);
+    }
+  };
+
+  const loadVehicles = async () => {
+    try {
+      const res = await fetch("/api/admin/vehicles?limit=200");
+      const json = await res.json();
+      const list: LocVehicle[] = (json.vehicles || []).map((v: any) => ({
+        id: String(v._id),
+        brand: v.brand,
+        model: v.model,
+        year: v.year,
+        licensePlate: v.licensePlate || "",
+        plates: (v.units || []).map((u: any) => u.licensePlate).filter(Boolean),
+        category: v.categoryId?.name?.fr || "",
+        pricing: { daily: Math.round(Number(v.pricing?.daily || 0)) / 100 },
+        status: v.status || "available",
+        locationId: String(v.location?._id || v.location || ""),
+        location: v.location?.name?.fr || "Flotte centrale",
+      }));
+      setVehicles(list);
+    } catch (err) {
+      console.warn("Failed to fetch vehicles:", err);
     }
   };
 
   React.useEffect(() => {
-    loadLocations();
+    Promise.all([loadLocations(), loadVehicles()]).finally(() => setLoadingData(false));
   }, []);
 
-  const showToast = (msg: string) => {
+  const [toastOk, setToastOk] = useState(true);
+  const showToast = (msg: string, ok = true) => {
+    setToastOk(ok);
     setSuccessToast(msg);
-    setTimeout(() => setSuccessToast(null), 3000);
+    setTimeout(() => setSuccessToast(null), 3500);
   };
 
   const filteredLocations = locations.filter(
@@ -121,91 +162,93 @@ export default function LocationManagerPage() {
       loc.code.toLowerCase().includes(search.toLowerCase())
   );
 
-  const totalAssignedCars = locations.reduce((sum, loc) => sum + loc.assignedVehiclesCount, 0);
+  const totalAssignedCars = vehicles.filter((v) => v.locationId).length;
 
-  // Handle assigning vehicle to location
-  const handleAssignVehicle = (e: React.FormEvent) => {
+  // Assign a car model to its home agency (persisted).
+  const handleAssignVehicle = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedVehicleId || !targetLocationName) return;
-
-    // Update vehicle location
-    setVehicles((prev) =>
-      prev.map((v) =>
-        v.id === selectedVehicleId ? { ...v, location: targetLocationName } : v
-      )
-    );
-
-    // Update location counts
-    setLocations((prev) =>
-      prev.map((loc) => {
-        const count = vehicles.filter((v) =>
-          v.id === selectedVehicleId ? targetLocationName.includes(loc.code) || targetLocationName.includes(loc.city) : v.location.includes(loc.code) || v.location.includes(loc.city)
-        ).length;
-        return { ...loc, assignedVehiclesCount: Math.max(1, count) };
-      })
-    );
-
-    const vehicleObj = vehicles.find((v) => v.id === selectedVehicleId);
-    showToast(
-      `${vehicleObj?.brand} ${vehicleObj?.model} assigné(e) avec succès à ${targetLocationName}`
-    );
-    setShowAssignModal(false);
-    setSelectedVehicleId("");
-    setTargetLocationName("");
+    if (!selectedVehicleId || !targetLocationId) return;
+    setSavingForm(true);
+    try {
+      const res = await fetch("/api/admin/vehicles", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: selectedVehicleId, location: targetLocationId === "central" ? null : targetLocationId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) throw new Error(data.error || "Enregistrement refusé");
+      const vehicleObj = vehicles.find((v) => v.id === selectedVehicleId);
+      const loc = locations.find((l) => l.id === targetLocationId);
+      showToast(`${vehicleObj?.brand} ${vehicleObj?.model} rattaché(e) à ${loc?.name || "la flotte centrale"}`);
+      setShowAssignModal(false);
+      setSelectedVehicleId("");
+      setTargetLocationId("");
+      await loadVehicles();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Erreur", false);
+    } finally {
+      setSavingForm(false);
+    }
   };
 
   // Add new location
   const handleCreateLocation = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError("");
+    if (formData.name.trim().length < 2) return setFormError("Le nom de l'agence est obligatoire.");
+    if (!formData.city.trim()) return setFormError("La ville est obligatoire.");
+    setSavingForm(true);
     try {
       const res = await fetch("/api/admin/locations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: { fr: formData.name, en: formData.name, ar: formData.name },
-          code: formData.code.toUpperCase(),
-          city: formData.city,
-          address: formData.address,
+          name: { fr: formData.name.trim(), en: formData.name.trim(), ar: formData.name.trim() },
+          code: formData.code.trim().toUpperCase(),
+          city: formData.city.trim(),
+          address: formData.address.trim() || formData.city.trim(),
           phone: formData.phone,
           email: formData.email,
           isAirport: formData.isAirport,
           isActive: true,
           isOutsideTunis: formData.isOutsideTunis,
-          pickupFee: Number(formData.pickupFee || 0) * 100, // store in minor units (centimes)
-          customReturnFee: Number(formData.customReturnFee || 0) * 100, // store in minor units
-          returnFee: Number(formData.customReturnFee || 0) * 100,
+          pickupFee: Math.round(Number(formData.pickupFee || 0) * 100), // minor units
+          customReturnFee: Math.round(Number(formData.customReturnFee || 0) * 100),
+          returnFee: Math.round(Number(formData.customReturnFee || 0) * 100),
         }),
       });
-      if (res.ok) {
-        showToast(`Agence "${formData.name}" enregistrée en base de données`);
-        loadLocations();
-      } else {
-        showToast(`Agence "${formData.name}" créée`);
-      }
-    } catch {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || "Création refusée par le serveur");
       showToast(`Agence "${formData.name}" créée`);
+      await loadLocations();
+      setShowAddModal(false);
+      setFormData({
+        code: "",
+        name: "",
+        city: "Tunis",
+        address: "",
+        phone: "+216 25 120 130",
+        email: "contact@paylesscarrental.tn",
+        isAirport: false,
+        isOutsideTunis: false,
+        pickupFee: 0,
+        customReturnFee: 0,
+        openingHours: "08:00 - 20:00",
+      });
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erreur réseau");
+    } finally {
+      setSavingForm(false);
     }
-
-    setShowAddModal(false);
-    setFormData({
-      code: "",
-      name: "",
-      city: "Tunis",
-      address: "",
-      phone: "+216 25 120 130",
-      email: "contact@paylesscarrental.tn",
-      isAirport: true,
-      isOutsideTunis: false,
-      pickupFee: 0,
-      customReturnFee: 100,
-      openingHours: "07:00 - 23:00",
-    });
   };
 
   // Update existing location
   const handleUpdateLocation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingLocation) return;
+    setFormError("");
+    if (editingLocation.name.trim().length < 2) return setFormError("Le nom de l'agence est obligatoire.");
+    setSavingForm(true);
     try {
       const res = await fetch("/api/admin/locations", {
         method: "PATCH",
@@ -214,28 +257,30 @@ export default function LocationManagerPage() {
           id: editingLocation.id,
           updates: {
             name: { fr: editingLocation.name, en: editingLocation.name, ar: editingLocation.name },
+            code: editingLocation.code,
             city: editingLocation.city,
-            address: editingLocation.address,
+            address: editingLocation.address || editingLocation.city,
             phone: editingLocation.phone,
             email: editingLocation.email,
             isAirport: editingLocation.isAirport,
+            isActive: editingLocation.isActive,
             isOutsideTunis: editingLocation.isOutsideTunis,
-            pickupFee: Number(editingLocation.pickupFee || 0) * 100,
-            customReturnFee: Number(editingLocation.customReturnFee || 0) * 100,
-            returnFee: Number(editingLocation.customReturnFee || 0) * 100,
+            pickupFee: Math.round(Number(editingLocation.pickupFee || 0) * 100),
+            customReturnFee: Math.round(Number(editingLocation.customReturnFee || 0) * 100),
+            returnFee: Math.round(Number(editingLocation.customReturnFee || 0) * 100),
           },
         }),
       });
-      if (res.ok) {
-        showToast(`Agence "${editingLocation.name}" mise à jour avec succès`);
-        loadLocations();
-      } else {
-        showToast(`Agence mise à jour`);
-      }
-    } catch {
-      showToast(`Agence mise à jour`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || "Mise à jour refusée");
+      showToast(`Agence "${editingLocation.name}" mise à jour`);
+      await loadLocations();
+      setEditingLocation(null);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "Erreur réseau");
+    } finally {
+      setSavingForm(false);
     }
-    setEditingLocation(null);
   };
 
   return (
@@ -247,7 +292,7 @@ export default function LocationManagerPage() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="fixed top-24 right-8 z-50 flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-emerald-500 text-white shadow-xl text-xs font-semibold"
+            className={`fixed top-24 right-4 sm:right-8 z-[60] flex items-center gap-2.5 px-4 py-3 rounded-2xl text-white shadow-xl text-xs font-semibold ${toastOk ? "bg-emerald-500" : "bg-red-600"}`}
           >
             <CheckCircle2 className="w-4 h-4" />
             <span>{successToast}</span>
@@ -276,7 +321,10 @@ export default function LocationManagerPage() {
           </button>
 
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={() => {
+              setFormError("");
+              setShowAddModal(true);
+            }}
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-600 text-white font-semibold text-xs shadow-md shadow-blue-500/25 transition-all hover:scale-[1.02]"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -417,9 +465,7 @@ export default function LocationManagerPage() {
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
                 {filteredLocations.map((loc) => {
-                  const locationCars = vehicles.filter(
-                    (v) => v.location.includes(loc.code) || v.location.includes(loc.city)
-                  );
+                  const locationCars = vehicles.filter((v) => v.locationId === loc.id);
                   const isMenuOpen = actionMenuOpenId === loc.id;
 
                   return (
@@ -479,7 +525,7 @@ export default function LocationManagerPage() {
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-bold text-xs transition-colors cursor-pointer"
                         >
                           <Car className="w-3.5 h-3.5" />
-                          <span>{locationCars.length > 0 ? locationCars.length : loc.assignedVehiclesCount}</span>
+                          <span>{locationCars.length}</span>
                         </button>
                       </td>
                       <td className="py-3.5 px-4 text-center whitespace-nowrap">
@@ -540,7 +586,7 @@ export default function LocationManagerPage() {
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    setTargetLocationName(`${loc.city} - ${loc.name}`);
+                                    setTargetLocationId(loc.id);
                                     setShowAssignModal(true);
                                     setActionMenuOpenId(null);
                                   }}
@@ -574,9 +620,7 @@ export default function LocationManagerPage() {
         /* LOCATION CARDS GRID */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredLocations.map((loc, idx) => {
-            const locationCars = vehicles.filter(
-              (v) => v.location.includes(loc.code) || v.location.includes(loc.city)
-            );
+            const locationCars = vehicles.filter((v) => v.locationId === loc.id);
 
             return (
               <motion.div
@@ -660,7 +704,7 @@ export default function LocationManagerPage() {
                       </span>
                     </div>
                     <span className="text-xs font-extrabold text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded-lg bg-blue-100/70 dark:bg-blue-600/20">
-                      {locationCars.length > 0 ? locationCars.length : loc.assignedVehiclesCount} véhicules
+                      {locationCars.length} véhicules
                     </span>
                   </div>
                 </div>
@@ -688,7 +732,7 @@ export default function LocationManagerPage() {
 
                   <button
                     onClick={() => {
-                      setTargetLocationName(`${loc.city} - ${loc.name}`);
+                      setTargetLocationId(loc.id);
                       setShowAssignModal(true);
                     }}
                     className="px-3 py-2 rounded-xl bg-blue-50 hover:bg-blue-100 dark:bg-blue-600/15 dark:hover:bg-blue-600/25 text-blue-700 dark:text-blue-400 font-semibold text-xs transition-colors border border-blue-200 dark:border-blue-500/30"
@@ -731,12 +775,11 @@ export default function LocationManagerPage() {
 
             {/* List of vehicles at this location */}
             <div className="flex-1 overflow-y-auto py-4 space-y-2.5">
+              {vehicles.filter((v) => v.locationId === selectedLocation.id).length === 0 && (
+                <p className="text-xs text-slate-500 text-center py-6">Aucun véhicule rattaché à cette agence.</p>
+              )}
               {vehicles
-                .filter(
-                  (v) =>
-                    v.location.includes(selectedLocation.code) ||
-                    v.location.includes(selectedLocation.city)
-                )
+                .filter((v) => v.locationId === selectedLocation.id)
                 .map((v) => (
                   <div
                     key={v.id}
@@ -751,7 +794,7 @@ export default function LocationManagerPage() {
                           {v.brand} {v.model} ({v.year})
                         </p>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
-                          Matricule: {v.licensePlate} · {v.category} · {v.pricing.daily} TND/j
+                          {v.plates.length ? v.plates.join(", ") : v.licensePlate} · {v.category} · {v.pricing.daily} TND/j
                         </p>
                       </div>
                     </div>
@@ -792,7 +835,7 @@ export default function LocationManagerPage() {
       {/* MODAL: ASSIGN CAR TO LOCATION */}
       {showAssignModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl p-6 text-slate-900 dark:text-slate-100">
+          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl p-6 text-slate-900 dark:text-slate-100 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 flex items-center justify-center">
@@ -829,7 +872,7 @@ export default function LocationManagerPage() {
                   <option value="">-- Choisir un véhicule --</option>
                   {vehicles.map((v) => (
                     <option key={v.id} value={v.id}>
-                      {v.brand} {v.model} ({v.licensePlate}) - Actuel: {v.location}
+                      {v.brand} {v.model} ({v.plates.length || 1} véh.) — actuel : {v.location}
                     </option>
                   ))}
                 </select>
@@ -841,20 +884,25 @@ export default function LocationManagerPage() {
                 </label>
                 <select
                   required
-                  value={targetLocationName}
-                  onChange={(e) => setTargetLocationName(e.target.value)}
+                  value={targetLocationId}
+                  onChange={(e) => setTargetLocationId(e.target.value)}
                   className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3 py-2.5 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
                 >
                   <option value="">-- Choisir l'agence de destination --</option>
+                  <option value="central">Flotte centrale (aucune agence)</option>
                   {locations.map((loc) => (
-                    <option key={loc.id} value={`${loc.city} - ${loc.name}`}>
+                    <option key={loc.id} value={loc.id}>
                       {loc.code} - {loc.name} ({loc.city})
                     </option>
                   ))}
                 </select>
               </div>
 
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-3">
+              <div className="sticky -bottom-6 -mx-6 -mb-6 px-6 py-4 z-10 bg-white dark:bg-[#0f141f] border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2">
+                {formError && (showAddModal || editingLocation) && (
+                  <p className="text-[11px] font-semibold text-red-600 dark:text-red-400">{formError}</p>
+                )}
+                <div className="flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setShowAssignModal(false)}
@@ -864,10 +912,12 @@ export default function LocationManagerPage() {
                 </button>
                 <button
                   type="submit"
+                  disabled={savingForm}
                   className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-md shadow-blue-500/25"
                 >
                   Confirmer le transfert
                 </button>
+                </div>
               </div>
             </form>
           </div>
@@ -877,7 +927,7 @@ export default function LocationManagerPage() {
       {/* MODAL: ADD NEW LOCATION */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl p-6 text-slate-900 dark:text-slate-100">
+          <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl p-6 text-slate-900 dark:text-slate-100 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-600/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
@@ -1053,7 +1103,11 @@ export default function LocationManagerPage() {
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-3">
+              <div className="sticky -bottom-6 -mx-6 -mb-6 px-6 py-4 z-10 bg-white dark:bg-[#0f141f] border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2">
+                {formError && (showAddModal || editingLocation) && (
+                  <p className="text-[11px] font-semibold text-red-600 dark:text-red-400">{formError}</p>
+                )}
+                <div className="flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
@@ -1063,10 +1117,12 @@ export default function LocationManagerPage() {
                 </button>
                 <button
                   type="submit"
+                  disabled={savingForm}
                   className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-md shadow-emerald-500/25"
                 >
-                  Enregistrer l'agence
+                  {savingForm ? "Enregistrement…" : "Enregistrer l'agence"}
                 </button>
+                </div>
               </div>
             </form>
           </div>
@@ -1242,7 +1298,11 @@ export default function LocationManagerPage() {
                 </div>
               </div>
 
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-3">
+              <div className="sticky -bottom-6 -mx-6 -mb-6 px-6 py-4 z-10 bg-white dark:bg-[#0f141f] border-t border-slate-200 dark:border-slate-800 flex flex-col gap-2">
+                {formError && (showAddModal || editingLocation) && (
+                  <p className="text-[11px] font-semibold text-red-600 dark:text-red-400">{formError}</p>
+                )}
+                <div className="flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setEditingLocation(null)}
@@ -1252,10 +1312,12 @@ export default function LocationManagerPage() {
                 </button>
                 <button
                   type="submit"
+                  disabled={savingForm}
                   className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold shadow-md shadow-blue-500/25"
                 >
                   Sauvegarder les modifications
                 </button>
+                </div>
               </div>
             </form>
           </div>

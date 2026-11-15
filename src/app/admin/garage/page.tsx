@@ -1,903 +1,850 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
 import {
   Wrench,
-  AlertTriangle,
-  CheckCircle2,
-  AlertCircle,
+  Droplets,
+  ClipboardCheck,
   Search,
-  Filter,
   RefreshCw,
-  Edit3,
-  Save,
-  X,
   Gauge,
-  Calendar,
-  FileText,
-  Car,
-  ChevronRight,
-  LayoutGrid,
-  Table as TableIcon,
-  Sparkles,
+  CalendarClock,
+  ShieldAlert,
+  CheckCircle2,
+  AlertTriangle,
+  X,
+  Plus,
+  History,
+  Loader2,
+  Settings2,
 } from "lucide-react";
-import Image from "next/image";
 import { useAdminLang } from "@/contexts/AdminLangContext";
-import { CarSpinner } from "@/components/ui/CarSpinner";
 
-interface GarageVehicle {
+type State = "ok" | "soon" | "overdue" | "unknown";
+
+interface HistoryItem {
   _id: string;
+  type: string;
+  description: string;
+  status: string;
+  startDate: string;
+  endDate: string | null;
+  cost: number;
+  provider: string;
+  mileage: number | null;
+}
+
+interface GarageUnit {
+  vehicleId: string;
+  unitId: string;
   brand: string;
   model: string;
   year: number;
+  category: string;
+  image: string;
   licensePlate: string;
-  status: string;
-  images: { url: string; isPrimary: boolean }[];
-  transmission?: string;
-  fuelType?: string;
+  label: string;
+  status: "active" | "maintenance" | "out_of_service";
   mileage: number;
   lastVidangeMileage: number;
-  nextVidangeMileage: number;
+  lastVidangeDate: string | null;
   vidangeInterval: number;
+  nextVidangeMileage: number;
   remainingKm: number;
-  isUrgent: boolean;
-  isOverdue: boolean;
   percentUsed: number;
-  garageNotes: string;
+  vidangeState: State;
   technicalInspectionDate: string | null;
-  category: string;
+  inspectionDays: number | null;
+  inspectionState: State;
+  insuranceExpiryDate: string | null;
+  insuranceDays: number | null;
+  insuranceState: State;
+  nextMaintenanceDate: string | null;
+  maintenanceDays: number | null;
+  openMaintenance: number;
+  notes: string;
+  history: HistoryItem[];
 }
 
-interface GarageStats {
+interface Stats {
   total: number;
-  alertsCount: number;
-  overdueCount: number;
-  totalNeedAttention: number;
-  okCount: number;
+  inGarage: number;
+  vidange: { overdue: number; soon: number };
+  inspection: { overdue: number; soon: number; unknown: number };
+  maintenance: { open: number; dueSoon: number };
 }
+
+interface AlertSettings {
+  vidangeKmThreshold: number;
+  inspectionDaysThreshold: number;
+  insuranceDaysThreshold: number;
+  enabled: Record<string, boolean>;
+}
+
+type Tab = "vidange" | "maintenance" | "inspection";
+type Modal =
+  | { kind: "vidange"; unit: GarageUnit }
+  | { kind: "inspection"; unit: GarageUnit }
+  | { kind: "maintenance"; unit: GarageUnit }
+  | { kind: "edit"; unit: GarageUnit }
+  | { kind: "history"; unit: GarageUnit }
+  | { kind: "settings" }
+  | null;
+
+const TYPE_LABEL: Record<string, string> = {
+  vidange: "Vidange",
+  technical_inspection: "Visite technique",
+  scheduled: "Entretien programmé",
+  unscheduled: "Intervention imprévue",
+  repair: "Réparation",
+  tyres: "Pneumatiques",
+  bodywork: "Carrosserie",
+  inspection: "Contrôle",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  scheduled: "Planifié",
+  in_progress: "En cours",
+  completed: "Terminé",
+  cancelled: "Annulé",
+};
+
+const stateClass: Record<State, string> = {
+  ok: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/30",
+  soon: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/30",
+  overdue: "bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/30",
+  unknown: "bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
+};
+
+const inputCls =
+  "w-full h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs font-semibold text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500";
+const btn = "inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-50";
+
+const fmtKm = (n: number) => `${Math.round(n).toLocaleString("fr-FR")} km`;
+const fmtDate = (d: string | null) => (d ? new Date(d).toLocaleDateString("fr-FR") : "—");
+const isoDay = (d: string | null) => (d ? new Date(d).toISOString().slice(0, 10) : "");
 
 export default function GaragePage() {
   const { lang } = useAdminLang();
-  const isEn = lang === "en";
+  const en = lang === "en";
 
-  const [vehicles, setVehicles] = useState<GarageVehicle[]>([]);
-  const [stats, setStats] = useState<GarageStats>({
-    total: 0,
-    alertsCount: 0,
-    overdueCount: 0,
-    totalNeedAttention: 0,
-    okCount: 0,
-  });
+  const [units, setUnits] = useState<GarageUnit[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [settings, setSettings] = useState<AlertSettings | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<Tab>("vidange");
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "alert" | "overdue" | "ok">("all");
-  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+  const [onlyAttention, setOnlyAttention] = useState(false);
+  const [focusUnit, setFocusUnit] = useState<string | null>(null);
+  const [modal, setModal] = useState<Modal>(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
 
-  // Edit vehicle state
-  const [editingVehicle, setEditingVehicle] = useState<GarageVehicle | null>(null);
-  const [editMileage, setEditMileage] = useState<number>(0);
-  const [editLastVidange, setEditLastVidange] = useState<number>(0);
-  const [editNextVidange, setEditNextVidange] = useState<number>(0);
-  const [editInterval, setEditInterval] = useState<number>(10000);
-  const [editNotes, setEditNotes] = useState<string>("");
-  const [editTechDate, setEditTechDate] = useState<string>("");
-  const [editStatus, setEditStatus] = useState<string>("available");
-  const [isSaving, setIsSaving] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const fetchGarageData = async () => {
+  const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/admin/garage?search=${encodeURIComponent(search)}&filter=${filter}`);
+      const res = await fetch("/api/admin/garage", { cache: "no-store" });
       const data = await res.json();
       if (data.success) {
-        setVehicles(data.vehicles);
-        if (data.stats) setStats(data.stats);
+        setUnits(data.units);
+        setStats(data.stats);
+        setSettings(data.settings);
+      } else {
+        notify(false, data.error || "Erreur de chargement");
       }
-    } catch (err) {
-      console.error("Error loading garage data:", err);
+    } catch {
+      notify(false, "Erreur réseau");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      fetchGarageData();
-    }, 250);
-    return () => clearTimeout(timeout);
-  }, [search, filter]);
+    // Deep links from notifications: /admin/garage?tab=inspection&unit=<id>
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get("tab");
+    if (t === "maintenance" || t === "inspection" || t === "vidange") setTab(t);
+    setFocusUnit(params.get("unit"));
+    load();
+  }, []);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
+  const notify = (ok: boolean, text: string) => {
+    setToast({ ok, text });
+    setTimeout(() => setToast(null), 3500);
   };
 
-  const openEditModal = (v: GarageVehicle) => {
-    setEditingVehicle(v);
-    setEditMileage(v.mileage);
-    setEditLastVidange(v.lastVidangeMileage);
-    setEditNextVidange(v.nextVidangeMileage);
-    setEditInterval(v.vidangeInterval || 10000);
-    setEditNotes(v.garageNotes || "");
-    setEditTechDate(v.technicalInspectionDate ? v.technicalInspectionDate.split("T")[0] : "");
-    setEditStatus(v.status);
-  };
-
-  const handleQuickVidangeDone = (v: GarageVehicle) => {
-    setEditingVehicle(v);
-    setEditMileage(v.mileage);
-    setEditLastVidange(v.mileage); // Vidange done at current mileage
-    setEditNextVidange(v.mileage + (v.vidangeInterval || 10000));
-    setEditInterval(v.vidangeInterval || 10000);
-    setEditNotes(v.garageNotes ? `${v.garageNotes}\n[${new Date().toLocaleDateString("fr-FR")}] Vidange effectuée à ${v.mileage.toLocaleString()} km.` : `[${new Date().toLocaleDateString("fr-FR")}] Vidange effectuée à ${v.mileage.toLocaleString()} km.`);
-    setEditTechDate(v.technicalInspectionDate ? v.technicalInspectionDate.split("T")[0] : "");
-    setEditStatus(v.status);
-  };
-
-  const handleSave = async () => {
-    if (!editingVehicle) return;
-    setIsSaving(true);
+  const send = async (body: Record<string, unknown>, okText: string, url = "/api/admin/garage", method = "PATCH") => {
+    setSaving(true);
     try {
-      const res = await fetch("/api/admin/garage", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          vehicleId: editingVehicle._id,
-          mileage: editMileage,
-          lastVidangeMileage: editLastVidange,
-          nextVidangeMileage: editNextVidange,
-          vidangeInterval: editInterval,
-          garageNotes: editNotes,
-          technicalInspectionDate: editTechDate || null,
-          status: editStatus,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        showToast(isEn ? "Vehicle maintenance details updated!" : "Détails garage enregistrés avec succès !");
-        setEditingVehicle(null);
-        fetchGarageData();
-      } else {
-        alert(data.error || "Erreur de sauvegarde");
-      }
-    } catch (err) {
-      console.error("Save error:", err);
-      alert("Erreur réseau");
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) throw new Error(data.error || "Échec");
+      notify(true, okText);
+      setModal(null);
+      await load();
+    } catch (e) {
+      notify(false, e instanceof Error ? e.message : "Erreur");
     } finally {
-      setIsSaving(false);
+      setSaving(false);
     }
   };
 
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let list = units.filter(
+      (u) => !q || `${u.licensePlate} ${u.brand} ${u.model}`.toLowerCase().includes(q)
+    );
+    if (focusUnit) list = list.filter((u) => u.unitId === focusUnit);
+    if (onlyAttention) {
+      list = list.filter((u) =>
+        tab === "vidange"
+          ? u.vidangeState !== "ok"
+          : tab === "inspection"
+          ? u.inspectionState !== "ok" || u.insuranceState === "soon" || u.insuranceState === "overdue"
+          : u.openMaintenance > 0 || u.status === "maintenance" || (u.maintenanceDays !== null && u.maintenanceDays <= 7)
+      );
+    }
+    const rank = (u: GarageUnit) =>
+      tab === "vidange"
+        ? u.remainingKm
+        : tab === "inspection"
+        ? Math.min(u.inspectionDays ?? 9999, u.insuranceDays ?? 9999)
+        : -(u.openMaintenance * 1000) + (u.maintenanceDays ?? 9999);
+    return [...list].sort((a, b) => rank(a) - rank(b));
+  }, [units, search, onlyAttention, tab, focusUnit]);
+
+  const tabs: { id: Tab; label: string; icon: typeof Wrench; badge: number }[] = [
+    { id: "vidange", label: "Vidange", icon: Droplets, badge: (stats?.vidange.overdue || 0) + (stats?.vidange.soon || 0) },
+    { id: "maintenance", label: "Maintenance", icon: Wrench, badge: (stats?.maintenance.open || 0) + (stats?.maintenance.dueSoon || 0) },
+    { id: "inspection", label: en ? "Technical inspection" : "Visite technique", icon: ClipboardCheck, badge: (stats?.inspection.overdue || 0) + (stats?.inspection.soon || 0) },
+  ];
+
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* Toast Alert */}
-      <AnimatePresence>
-        {toastMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed top-20 right-6 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-xl flex items-center gap-2 text-sm font-semibold"
-          >
-            <CheckCircle2 className="w-5 h-5" />
-            {toastMessage}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="p-2.5 bg-orange-500/10 dark:bg-orange-500/20 text-orange-600 dark:text-orange-400 rounded-xl">
-              <Wrench className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                {isEn ? "Garage & Maintenance Fleet" : "Garage & Entretien Flotte"}
-              </h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                {isEn
-                  ? "Track vehicle mileages, oil changes (vidange alerts ≤ 2,000 km) and internal mechanic notes."
-                  : "Suivi des kilométrages, alertes vidanges (seuil ≤ 2 000 km) et notes d'intervention du garage."}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={fetchGarageData}
-            disabled={loading}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm font-medium transition-colors"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-            <span className="hidden sm:inline">{isEn ? "Refresh" : "Actualiser"}</span>
-          </button>
-
-          <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-            <button
-              onClick={() => setViewMode("grid")}
-              className={`p-1.5 rounded-lg transition-colors ${
-                viewMode === "grid"
-                  ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
-                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
-              }`}
-              title={isEn ? "Grid View" : "Vue Grille"}
-            >
-              <LayoutGrid className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setViewMode("table")}
-              className={`p-1.5 rounded-lg transition-colors ${
-                viewMode === "table"
-                  ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
-                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
-              }`}
-              title={isEn ? "Table View" : "Vue Tableau"}
-            >
-              <TableIcon className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        {/* Urgent Vidanges Alert Card */}
+    <div className="max-w-7xl mx-auto space-y-6 pb-16">
+      {toast && (
         <div
-          onClick={() => setFilter("alert")}
-          className={`cursor-pointer p-4 rounded-2xl border transition-all ${
-            filter === "alert"
-              ? "ring-2 ring-orange-500 bg-orange-50/70 dark:bg-orange-950/30 border-orange-200 dark:border-orange-800"
-              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-orange-300"
+          className={`fixed top-20 right-4 z-[60] px-4 py-3 rounded-2xl shadow-xl text-xs font-semibold flex items-center gap-2 text-white ${
+            toast.ok ? "bg-emerald-600" : "bg-red-600"
           }`}
         >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-orange-600 dark:text-orange-400">
-              {isEn ? "Vidange Alert (≤ 2,000 km)" : "Alerte Vidange (≤ 2 000 km)"}
-            </span>
-            <div className="p-2 bg-orange-500/10 text-orange-600 rounded-xl">
-              <AlertTriangle className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-bold text-orange-600 dark:text-orange-400">
-              {stats.alertsCount}
-            </span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              {isEn ? "vehicles" : "véhicules"}
-            </span>
-          </div>
-          <p className="text-xs text-orange-700/80 dark:text-orange-400/80 mt-1">
-            {isEn ? "Oil change needed soon" : "Vidange à programmer"}
-          </p>
-        </div>
-
-        {/* Overdue Card */}
-        <div
-          onClick={() => setFilter("overdue")}
-          className={`cursor-pointer p-4 rounded-2xl border transition-all ${
-            filter === "overdue"
-              ? "ring-2 ring-red-500 bg-red-50/70 dark:bg-red-950/30 border-red-200 dark:border-red-800"
-              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-red-300"
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-red-600 dark:text-red-400">
-              {isEn ? "Overdue Vidange" : "Vidange Dépassée"}
-            </span>
-            <div className="p-2 bg-red-500/10 text-red-600 rounded-xl">
-              <AlertCircle className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-bold text-red-600 dark:text-red-400">
-              {stats.overdueCount}
-            </span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              {isEn ? "vehicles" : "véhicules"}
-            </span>
-          </div>
-          <p className="text-xs text-red-700/80 dark:text-red-400/80 mt-1">
-            {isEn ? "Immediate maintenance required" : "Entretien immédiat requis"}
-          </p>
-        </div>
-
-        {/* OK / Up to date */}
-        <div
-          onClick={() => setFilter("ok")}
-          className={`cursor-pointer p-4 rounded-2xl border transition-all ${
-            filter === "ok"
-              ? "ring-2 ring-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800"
-              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-emerald-300"
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-              {isEn ? "Vidange OK (> 2,000 km)" : "Vidange À Jour"}
-            </span>
-            <div className="p-2 bg-emerald-500/10 text-emerald-600 rounded-xl">
-              <CheckCircle2 className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-bold text-emerald-600 dark:text-emerald-400">
-              {stats.okCount}
-            </span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              {isEn ? "vehicles" : "véhicules"}
-            </span>
-          </div>
-          <p className="text-xs text-emerald-700/80 dark:text-emerald-400/80 mt-1">
-            {isEn ? "In good condition" : "En parfait état"}
-          </p>
-        </div>
-
-        {/* Total Fleet */}
-        <div
-          onClick={() => setFilter("all")}
-          className={`cursor-pointer p-4 rounded-2xl border transition-all ${
-            filter === "all"
-              ? "ring-2 ring-blue-500 bg-blue-50/70 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800"
-              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-blue-300"
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
-              {isEn ? "Total Fleet" : "Flotte Totale"}
-            </span>
-            <div className="p-2 bg-blue-500/10 text-blue-600 rounded-xl">
-              <Car className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">
-              {stats.total}
-            </span>
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              {isEn ? "vehicles" : "véhicules"}
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            {isEn ? "All vehicles monitored" : "Tous les véhicules suivis"}
-          </p>
-        </div>
-      </div>
-
-      {/* Filter Chips & Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={
-              isEn
-                ? "Search by brand, model, license plate..."
-                : "Rechercher par marque, modèle, immatriculation..."
-            }
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
-          />
-          {search && (
-            <button
-              onClick={() => setSearch("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-
-        {/* Filter Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-          {[
-            { id: "all", label: isEn ? "All" : "Tous", count: stats.total },
-            {
-              id: "alert",
-              label: isEn ? "Alert (≤ 2,000 km)" : "Alerte (≤ 2 000 km)",
-              count: stats.alertsCount,
-              badgeClass: "bg-orange-500 text-white",
-            },
-            {
-              id: "overdue",
-              label: isEn ? "Overdue" : "Dépassé",
-              count: stats.overdueCount,
-              badgeClass: "bg-red-500 text-white",
-            },
-            {
-              id: "ok",
-              label: isEn ? "Up to date" : "À jour",
-              count: stats.okCount,
-              badgeClass: "bg-emerald-500 text-white",
-            },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setFilter(item.id as typeof filter)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all flex items-center gap-1.5 ${
-                filter === item.id
-                  ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm"
-                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
-              }`}
-            >
-              <span>{item.label}</span>
-              <span
-                className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-                  item.badgeClass || (filter === item.id ? "bg-white/20 text-white" : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300")
-                }`}
-              >
-                {item.count}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      {loading ? (
-        <div className="py-20 flex flex-col items-center justify-center text-slate-400">
-          <CarSpinner
-            size="lg"
-            label={isEn ? "Loading garage fleet data..." : "Vérification des kilométrages & vidanges..."}
-          />
-        </div>
-      ) : vehicles.length === 0 ? (
-        <div className="py-16 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
-          <Wrench className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-3" />
-          <h3 className="text-base font-semibold text-slate-900 dark:text-white">
-            {isEn ? "No vehicles found" : "Aucun véhicule correspondant"}
-          </h3>
-          <p className="text-sm text-slate-500 mt-1">
-            {isEn
-              ? "Try adjusting your search or filter."
-              : "Essayez de modifier votre recherche ou le filtre sélectionné."}
-          </p>
-        </div>
-      ) : viewMode === "grid" ? (
-        /* GRID VIEW */
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
-          {vehicles.map((v) => {
-            const primaryImg = v.images?.find((img) => img.isPrimary)?.url || v.images?.[0]?.url || "/placeholder-car.jpg";
-
-            return (
-              <div
-                key={v._id}
-                className={`group rounded-2xl border bg-white dark:bg-slate-900 overflow-hidden flex flex-col transition-all hover:shadow-lg charging-card ${
-                  v.isOverdue
-                    ? "border-red-300 dark:border-red-900/60 shadow-red-500/5"
-                    : v.isUrgent
-                    ? "border-orange-300 dark:border-orange-900/60 shadow-orange-500/5"
-                    : "border-slate-200 dark:border-slate-800 hover:border-slate-300"
-                }`}
-              >
-                {/* Image & Header */}
-                <div className="relative h-44 bg-slate-100 dark:bg-slate-800/60 overflow-hidden">
-                  <Image
-                    src={primaryImg}
-                    alt={`${v.brand} ${v.model}`}
-                    fill
-                    className="object-cover group-hover:scale-105 transition-transform duration-300"
-                    unoptimized
-                  />
-                  {/* Status & Plate pill */}
-                  <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
-                    <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white/95 dark:bg-slate-900/95 backdrop-blur text-slate-800 dark:text-slate-100 shadow border border-slate-200/50 dark:border-slate-700/50 tracking-wider font-mono">
-                      {v.licensePlate}
-                    </span>
-
-                    {v.isOverdue ? (
-                      <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-red-600 text-white shadow flex items-center gap-1 animate-pulse">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        {isEn ? "OVERDUE" : "DÉPASSÉ"}
-                      </span>
-                    ) : v.isUrgent ? (
-                      <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-orange-500 text-white shadow flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        {isEn ? "ALERT ≤ 2,000 KM" : "ALERTE ≤ 2 000 KM"}
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-500/90 text-white shadow">
-                        {isEn ? "VIDANGE OK" : "VIDANGE OK"}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="absolute bottom-2 left-3">
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-black/60 text-white backdrop-blur">
-                      {v.category}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Body Details */}
-                <div className="p-4 flex-1 flex flex-col justify-between space-y-4">
-                  <div>
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h3 className="font-bold text-slate-900 dark:text-white text-base">
-                          {v.brand} {v.model}
-                        </h3>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                          {v.year} • {v.fuelType || "Essence"} • {v.transmission || "Manuelle"}
-                        </p>
-                      </div>
-
-                      <button
-                        onClick={() => openEditModal(v)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 transition-colors"
-                        title={isEn ? "Edit garage details" : "Modifier fiche garage"}
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-                    </div>
-
-                    {/* Mileage & Oil Progress */}
-                    <div className="mt-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 space-y-2.5">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                          <Gauge className="w-3.5 h-3.5" />
-                          {isEn ? "Current Mileage" : "Kilométrage actuel"}
-                        </span>
-                        <span className="font-bold text-slate-900 dark:text-white text-sm">
-                          {v.mileage.toLocaleString()} km
-                        </span>
-                      </div>
-
-                      {/* Progress bar of vidange */}
-                      <div>
-                        <div className="flex items-center justify-between text-[11px] mb-1">
-                          <span className="text-slate-500">
-                            {isEn ? "Last:" : "Dernière :"} {v.lastVidangeMileage.toLocaleString()} km
-                          </span>
-                          <span className="text-slate-500">
-                            {isEn ? "Next:" : "Prochaine :"} {v.nextVidangeMileage.toLocaleString()} km
-                          </span>
-                        </div>
-                        <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full transition-all rounded-full ${
-                              v.isOverdue
-                                ? "bg-red-500"
-                                : v.isUrgent
-                                ? "bg-orange-500"
-                                : "bg-emerald-500"
-                            }`}
-                            style={{ width: `${Math.min(100, v.percentUsed)}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Remaining KM Banner */}
-                      <div className="pt-1 flex items-center justify-between text-xs">
-                        <span className="text-slate-600 dark:text-slate-400">
-                          {isEn ? "Remaining before vidange:" : "Reste avant vidange :"}
-                        </span>
-                        <span
-                          className={`font-bold ${
-                            v.isOverdue
-                              ? "text-red-600 dark:text-red-400"
-                              : v.isUrgent
-                              ? "text-orange-600 dark:text-orange-400"
-                              : "text-emerald-600 dark:text-emerald-400"
-                          }`}
-                        >
-                          {v.remainingKm <= 0
-                            ? isEn
-                              ? `Exceeded by ${Math.abs(v.remainingKm).toLocaleString()} km!`
-                              : `Dépassé de ${Math.abs(v.remainingKm).toLocaleString()} km !`
-                            : `${v.remainingKm.toLocaleString()} km`}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Admin Garage Notes preview */}
-                    {v.garageNotes && (
-                      <div className="mt-3 p-2.5 rounded-lg bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-900/30 text-xs text-amber-900 dark:text-amber-200">
-                        <div className="flex items-center gap-1 font-semibold text-[11px] mb-0.5 text-amber-800 dark:text-amber-400">
-                          <FileText className="w-3 h-3" />
-                          {isEn ? "Garage Note" : "Note Atelier / Admin"}
-                        </div>
-                        <p className="line-clamp-2 italic text-[11px]">{v.garageNotes}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
-                    <button
-                      onClick={() => handleQuickVidangeDone(v)}
-                      className="flex-1 py-2 px-3 rounded-xl bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 hover:bg-orange-100 dark:hover:bg-orange-900/50 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      {isEn ? "Vidange Done" : "Vidange Effectuée"}
-                    </button>
-
-                    <button
-                      onClick={() => openEditModal(v)}
-                      className="py-2 px-3 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold transition-colors"
-                    >
-                      {isEn ? "Details & Notes" : "Détails & Notes"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        /* TABLE VIEW - 100% RESPONSIVE */
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm border-collapse min-w-[700px]">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 text-xs font-bold uppercase text-slate-500 dark:text-slate-400">
-                  <th className="py-3 px-4">{isEn ? "Vehicle" : "Véhicule"}</th>
-                  <th className="py-3 px-4">{isEn ? "Plate" : "Matricule"}</th>
-                  <th className="py-3 px-4">{isEn ? "Mileage" : "Kilométrage"}</th>
-                  <th className="py-3 px-4">{isEn ? "Last Vidange" : "Dernière Vidange"}</th>
-                  <th className="py-3 px-4">{isEn ? "Next Vidange" : "Prochaine Vidange"}</th>
-                  <th className="py-3 px-4">{isEn ? "Status Vidange" : "État Vidange"}</th>
-                  <th className="py-3 px-4">{isEn ? "Garage Notes" : "Notes Garage"}</th>
-                  <th className="py-3 px-4 text-right">{isEn ? "Actions" : "Actions"}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {vehicles.map((v) => (
-                  <tr
-                    key={v._id}
-                    className={`hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors ${
-                      v.isOverdue
-                        ? "bg-red-50/30 dark:bg-red-950/10"
-                        : v.isUrgent
-                        ? "bg-orange-50/30 dark:bg-orange-950/10"
-                        : ""
-                    }`}
-                  >
-                    <td className="py-3 px-4">
-                      <div className="font-semibold text-slate-900 dark:text-white">
-                        {v.brand} {v.model}
-                      </div>
-                      <div className="text-xs text-slate-500">{v.year} • {v.category}</div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
-                        {v.licensePlate}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
-                      {v.mileage.toLocaleString()} km
-                    </td>
-                    <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
-                      {v.lastVidangeMileage.toLocaleString()} km
-                    </td>
-                    <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
-                      {v.nextVidangeMileage.toLocaleString()} km
-                    </td>
-                    <td className="py-3 px-4">
-                      {v.isOverdue ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 dark:bg-red-950 text-red-600 dark:text-red-400">
-                          <AlertCircle className="w-3.5 h-3.5" />
-                          {isEn ? `Overdue (-${Math.abs(v.remainingKm)} km)` : `Dépassé (-${Math.abs(v.remainingKm)} km)`}
-                        </span>
-                      ) : v.isUrgent ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-orange-100 dark:bg-orange-950 text-orange-600 dark:text-orange-400">
-                          <AlertTriangle className="w-3.5 h-3.5" />
-                          {isEn ? `Alert (${v.remainingKm} km)` : `Alerte (${v.remainingKm} km)`}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          {isEn ? `OK (${v.remainingKm} km)` : `OK (${v.remainingKm} km)`}
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 max-w-xs truncate text-xs text-slate-500 italic">
-                      {v.garageNotes || "—"}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => handleQuickVidangeDone(v)}
-                          className="px-2.5 py-1 bg-orange-500/10 text-orange-600 hover:bg-orange-500/20 rounded-lg text-xs font-semibold"
-                          title={isEn ? "Record oil change done" : "Enregistrer vidange effectuée"}
-                        >
-                          {isEn ? "Vidange" : "Vidange"}
-                        </button>
-                        <button
-                          onClick={() => openEditModal(v)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800"
-                        >
-                          <Edit3 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {toast.ok ? <CheckCircle2 className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+          {toast.text}
         </div>
       )}
 
-      {/* EDIT MODAL / DRAWER */}
-      <AnimatePresence>
-        {editingVehicle && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl p-6"
-            >
-              {/* Modal Header */}
-              <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Wrench className="w-5 h-5 text-orange-500" />
-                    <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                      {editingVehicle.brand} {editingVehicle.model} ({editingVehicle.year})
-                    </h3>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {isEn ? "License plate:" : "Immatriculation :"} <span className="font-mono font-bold">{editingVehicle.licensePlate}</span>
-                  </p>
-                </div>
-                <button
-                  onClick={() => setEditingVehicle(null)}
-                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+            <Wrench className="w-6 h-6 text-blue-600" /> {en ? "Garage" : "Garage & entretien"}
+          </h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            {en
+              ? "One line per physical car (license plate). Alerts are sent automatically."
+              : "Une ligne par véhicule (immatriculation). Les alertes sont envoyées automatiquement."}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => setModal({ kind: "settings" })} className={`${btn} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}>
+            <Settings2 className="w-4 h-4" /> {en ? "Alert thresholds" : "Seuils d'alerte"}
+          </button>
+          <button type="button" onClick={load} className={`${btn} bg-blue-600 hover:bg-blue-500 text-white`}>
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} /> {en ? "Refresh" : "Actualiser"}
+          </button>
+        </div>
+      </div>
 
-              {/* Form Fields */}
-              <div className="py-4 space-y-4">
-                {/* Current Mileage */}
-                <div>
-                  <label className="block text-xs font-bold uppercase text-slate-600 dark:text-slate-300 mb-1.5">
-                    {isEn ? "Current Mileage (km) *" : "Kilométrage actuel (km) *"}
-                  </label>
-                  <input
-                    type="number"
-                    value={editMileage}
-                    onChange={(e) => setEditMileage(Number(e.target.value))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                  />
-                </div>
+      {/* KPIs */}
+      {stats && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            { label: en ? "Cars" : "Véhicules", value: stats.total, cls: "text-slate-900 dark:text-white" },
+            { label: en ? "In the garage" : "Au garage", value: stats.inGarage, cls: "text-blue-600" },
+            { label: en ? "Oil change due" : "Vidanges à faire", value: stats.vidange.overdue + stats.vidange.soon, cls: stats.vidange.overdue ? "text-red-600" : "text-amber-600" },
+            { label: en ? "Inspection / insurance" : "Visite / assurance", value: stats.inspection.overdue + stats.inspection.soon, cls: stats.inspection.overdue ? "text-red-600" : "text-amber-600" },
+          ].map((k) => (
+            <div key={k.label} className="p-4 rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">{k.label}</p>
+              <p className={`text-2xl font-black mt-1 ${k.cls}`}>{k.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
-                {/* Vidange Details Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                      {isEn ? "Last Vidange (km)" : "Dernière vidange (km)"}
-                    </label>
-                    <input
-                      type="number"
-                      value={editLastVidange}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setEditLastVidange(val);
-                        setEditNextVidange(val + editInterval);
-                      }}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+      {/* Tabs */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={`${btn} px-4 py-2.5 whitespace-nowrap ${
+              tab === t.id
+                ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                : "bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300"
+            }`}
+          >
+            <t.icon className="w-4 h-4" />
+            {t.label}
+            {t.badge > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px]">{t.badge}</span>}
+          </button>
+        ))}
+      </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                      {isEn ? "Next Vidange (km)" : "Prochaine vidange (km)"}
-                    </label>
-                    <input
-                      type="number"
-                      value={editNextVidange}
-                      onChange={(e) => setEditNextVidange(Number(e.target.value))}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-bold text-orange-600 dark:text-orange-400 outline-none focus:ring-2 focus:ring-orange-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                      {isEn ? "Vidange Interval (km)" : "Intervalle de vidange (km)"}
-                    </label>
-                    <input
-                      type="number"
-                      value={editInterval}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
-                        setEditInterval(val);
-                        setEditNextVidange(editLastVidange + val);
-                      }}
-                      step={1000}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                      {isEn ? "Technical Inspection (Visite)" : "Prochaine Visite Technique"}
-                    </label>
-                    <input
-                      type="date"
-                      value={editTechDate}
-                      onChange={(e) => setEditTechDate(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-
-                {/* Status selector */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                    {isEn ? "Vehicle Fleet Status" : "Statut du véhicule"}
-                  </label>
-                  <select
-                    value={editStatus}
-                    onChange={(e) => setEditStatus(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="available">{isEn ? "Available" : "Disponible"}</option>
-                    <option value="rented">{isEn ? "Rented" : "En location"}</option>
-                    <option value="maintenance">{isEn ? "In Maintenance / Garage" : "En maintenance / Garage"}</option>
-                    <option value="reserved">{isEn ? "Reserved" : "Réservé"}</option>
-                  </select>
-                </div>
-
-                {/* Garage Notes */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-bold uppercase text-slate-600 dark:text-slate-300 flex items-center gap-1">
-                      <FileText className="w-3.5 h-3.5 text-orange-500" />
-                      {isEn ? "Garage & Maintenance Notes (Admin Only)" : "Notes Garage & Détails Réparations (Admin)"}
-                    </label>
-                  </div>
-                  <textarea
-                    rows={4}
-                    value={editNotes}
-                    onChange={(e) => setEditNotes(e.target.value)}
-                    placeholder={
-                      isEn
-                        ? "Enter notes regarding engine, brakes, tires, defects, scratch reports, or past garage interventions..."
-                        : "Indiquer les réparations effectuées, état des freins, pneus, rayures, pièces changées ou observations mécaniques..."
-                    }
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none resize-none font-sans"
-                  />
-                </div>
-              </div>
-
-              {/* Modal Actions */}
-              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setEditingVehicle(null)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-sm font-semibold transition-colors"
-                >
-                  {isEn ? "Cancel" : "Annuler"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="px-5 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold shadow-lg shadow-orange-600/20 disabled:opacity-50 transition-all flex items-center gap-2"
-                >
-                  {isSaving ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Save className="w-4 h-4" />
-                  )}
-                  {isEn ? "Save Changes" : "Enregistrer"}
-                </button>
-              </div>
-            </motion.div>
-          </div>
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-2">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={en ? "Search plate, brand, model…" : "Rechercher immatriculation, marque, modèle…"}
+            className={`${inputCls} pl-9`}
+          />
+        </div>
+        <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 px-2">
+          <input type="checkbox" checked={onlyAttention} onChange={(e) => setOnlyAttention(e.target.checked)} />
+          {en ? "Needs attention only" : "À traiter uniquement"}
+        </label>
+        {focusUnit && (
+          <button type="button" onClick={() => setFocusUnit(null)} className={`${btn} border border-slate-200 dark:border-slate-700`}>
+            <X className="w-3.5 h-3.5" /> {en ? "Show all" : "Tout afficher"}
+          </button>
         )}
-      </AnimatePresence>
+      </div>
+
+      {/* List */}
+      {loading && units.length === 0 ? (
+        <div className="py-20 flex justify-center text-slate-400">
+          <Loader2 className="w-6 h-6 animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="py-16 text-center text-sm text-slate-500">{en ? "Nothing to show." : "Aucun véhicule à afficher."}</div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filtered.map((u) => (
+            <UnitCard key={u.unitId} u={u} tab={tab} onOpen={setModal} />
+          ))}
+        </div>
+      )}
+
+      {modal && (
+        <GarageModal
+          modal={modal}
+          settings={settings}
+          saving={saving}
+          onClose={() => setModal(null)}
+          onSend={send}
+        />
+      )}
     </div>
   );
 }
 
+function StatePill({ state, children }: { state: State; children: React.ReactNode }) {
+  return <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold ${stateClass[state]}`}>{children}</span>;
+}
+
+function UnitCard({ u, tab, onOpen }: { u: GarageUnit; tab: Tab; onOpen: (m: Modal) => void }) {
+  const barColor = u.vidangeState === "overdue" ? "bg-red-500" : u.vidangeState === "soon" ? "bg-amber-500" : "bg-emerald-500";
+  return (
+    <div className="rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-mono font-black text-sm tracking-wider text-slate-900 dark:text-white truncate">{u.label}</p>
+          <p className="text-xs text-slate-500 truncate">
+            {u.brand} {u.model} · {u.year}
+          </p>
+        </div>
+        <span
+          className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${
+            u.status === "active"
+              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300"
+              : u.status === "maintenance"
+              ? "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300"
+              : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+          }`}
+        >
+          {u.status === "active" ? "En service" : u.status === "maintenance" ? "Au garage" : "Hors service"}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+        <Gauge className="w-4 h-4 text-blue-500" /> {fmtKm(u.mileage)}
+      </div>
+
+      {tab === "vidange" && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <StatePill state={u.vidangeState}>
+              {u.vidangeState === "overdue"
+                ? `Dépassée de ${fmtKm(-u.remainingKm)}`
+                : `Vidange dans ${fmtKm(u.remainingKm)}`}
+            </StatePill>
+            <span className="text-slate-400">à {fmtKm(u.nextVidangeMileage)}</span>
+          </div>
+          <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+            <div className={`h-full ${barColor}`} style={{ width: `${u.percentUsed}%` }} />
+          </div>
+          <p className="text-[11px] text-slate-500">
+            Dernière : {fmtKm(u.lastVidangeMileage)}
+            {u.lastVidangeDate ? ` le ${fmtDate(u.lastVidangeDate)}` : ""} · intervalle {fmtKm(u.vidangeInterval)}
+          </p>
+        </div>
+      )}
+
+      {tab === "inspection" && (
+        <div className="space-y-1.5 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Visite technique</span>
+            <StatePill state={u.inspectionState}>
+              {u.inspectionDays === null
+                ? "Date non renseignée"
+                : u.inspectionDays < 0
+                ? `Expirée (${fmtDate(u.technicalInspectionDate)})`
+                : `${fmtDate(u.technicalInspectionDate)} · ${u.inspectionDays} j`}
+            </StatePill>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Assurance</span>
+            <StatePill state={u.insuranceState}>
+              {u.insuranceDays === null
+                ? "Non renseignée"
+                : u.insuranceDays < 0
+                ? `Expirée (${fmtDate(u.insuranceExpiryDate)})`
+                : `${fmtDate(u.insuranceExpiryDate)} · ${u.insuranceDays} j`}
+            </StatePill>
+          </div>
+        </div>
+      )}
+
+      {tab === "maintenance" && (
+        <div className="space-y-1.5 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Prochain entretien</span>
+            <StatePill state={u.maintenanceDays === null ? "unknown" : u.maintenanceDays < 0 ? "overdue" : u.maintenanceDays <= 7 ? "soon" : "ok"}>
+              {u.nextMaintenanceDate ? fmtDate(u.nextMaintenanceDate) : "Non planifié"}
+            </StatePill>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-slate-500">Interventions ouvertes</span>
+            <span className="font-bold">{u.openMaintenance}</span>
+          </div>
+          {u.history[0] && (
+            <p className="text-[11px] text-slate-500 truncate">
+              Dernière : {TYPE_LABEL[u.history[0].type] || u.history[0].type} — {fmtDate(u.history[0].startDate)}
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="mt-auto grid grid-cols-3 gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+        {tab === "vidange" && (
+          <button type="button" onClick={() => onOpen({ kind: "vidange", unit: u })} className={`${btn} bg-blue-600 hover:bg-blue-500 text-white col-span-1`}>
+            <Droplets className="w-3.5 h-3.5" /> Faite
+          </button>
+        )}
+        {tab === "inspection" && (
+          <button type="button" onClick={() => onOpen({ kind: "inspection", unit: u })} className={`${btn} bg-blue-600 hover:bg-blue-500 text-white`}>
+            <ClipboardCheck className="w-3.5 h-3.5" /> Faite
+          </button>
+        )}
+        {tab === "maintenance" && (
+          <button type="button" onClick={() => onOpen({ kind: "maintenance", unit: u })} className={`${btn} bg-blue-600 hover:bg-blue-500 text-white`}>
+            <Plus className="w-3.5 h-3.5" /> Intervention
+          </button>
+        )}
+        <button type="button" onClick={() => onOpen({ kind: "edit", unit: u })} className={`${btn} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}>
+          <CalendarClock className="w-3.5 h-3.5" /> Modifier
+        </button>
+        <button type="button" onClick={() => onOpen({ kind: "history", unit: u })} className={`${btn} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}>
+          <History className="w-3.5 h-3.5" /> Historique
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block space-y-1">
+      <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function GarageModal({
+  modal,
+  settings,
+  saving,
+  onClose,
+  onSend,
+}: {
+  modal: NonNullable<Modal>;
+  settings: AlertSettings | null;
+  saving: boolean;
+  onClose: () => void;
+  onSend: (body: Record<string, unknown>, okText: string, url?: string, method?: string) => void;
+}) {
+  const u = "unit" in modal ? modal.unit : null;
+  const [f, setF] = useState<Record<string, string | boolean>>((): Record<string, string | boolean> => {
+    if (modal.kind === "settings" && settings) {
+      return {
+        vidangeKmThreshold: String(settings.vidangeKmThreshold),
+        inspectionDaysThreshold: String(settings.inspectionDaysThreshold),
+        insuranceDaysThreshold: String(settings.insuranceDaysThreshold),
+        ...Object.fromEntries(Object.entries(settings.enabled).map(([k, v]) => [`en_${k}`, v])),
+      };
+    }
+    if (!u) return {};
+    return {
+      mileage: String(u.mileage),
+      date: new Date().toISOString().slice(0, 10),
+      nextDate: (() => {
+        const d = new Date();
+        d.setFullYear(d.getFullYear() + 1);
+        return d.toISOString().slice(0, 10);
+      })(),
+      cost: "",
+      provider: "",
+      notes: "",
+      type: "repair",
+      description: "",
+      status: "scheduled",
+      immobilize: false,
+      vidangeInterval: String(u.vidangeInterval),
+      lastVidangeMileage: String(u.lastVidangeMileage),
+      technicalInspectionDate: isoDay(u.technicalInspectionDate),
+      insuranceExpiryDate: isoDay(u.insuranceExpiryDate),
+      nextMaintenanceDate: isoDay(u.nextMaintenanceDate),
+      unitStatus: u.status,
+      unitNotes: u.notes,
+    };
+  });
+  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
+    setF((p) => ({ ...p, [k]: e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value }));
+  const num = (k: string) => (String(f[k] ?? "").trim() === "" ? undefined : Number(f[k]));
+  const ids = u ? { vehicleId: u.vehicleId, unitId: u.unitId } : {};
+
+  const title =
+    modal.kind === "vidange"
+      ? "Vidange effectuée"
+      : modal.kind === "inspection"
+      ? "Visite technique effectuée"
+      : modal.kind === "maintenance"
+      ? "Nouvelle intervention"
+      : modal.kind === "edit"
+      ? "Modifier le suivi"
+      : modal.kind === "history"
+      ? "Historique d'entretien"
+      : "Seuils des alertes";
+
+  const submit = () => {
+    if (modal.kind === "vidange") {
+      onSend({ action: "vidange_done", ...ids, mileage: num("mileage") ?? 0, date: f.date, cost: num("cost"), provider: f.provider || undefined, notes: f.notes || undefined }, "Vidange enregistrée");
+    } else if (modal.kind === "inspection") {
+      onSend({ action: "inspection_done", ...ids, date: f.date, nextDate: f.nextDate, cost: num("cost"), provider: f.provider || undefined, notes: f.notes || undefined }, "Visite technique enregistrée");
+    } else if (modal.kind === "maintenance") {
+      onSend(
+        {
+          action: "add_maintenance",
+          ...ids,
+          type: f.type,
+          description: f.description,
+          startDate: f.date,
+          status: f.status,
+          cost: num("cost"),
+          provider: f.provider || undefined,
+          mileage: num("mileage"),
+          immobilize: Boolean(f.immobilize),
+        },
+        "Intervention enregistrée"
+      );
+    } else if (modal.kind === "edit") {
+      onSend(
+        {
+          action: "update",
+          ...ids,
+          mileage: num("mileage"),
+          vidangeInterval: num("vidangeInterval"),
+          lastVidangeMileage: num("lastVidangeMileage"),
+          technicalInspectionDate: f.technicalInspectionDate,
+          insuranceExpiryDate: f.insuranceExpiryDate,
+          nextMaintenanceDate: f.nextMaintenanceDate,
+          status: f.unitStatus,
+          notes: f.unitNotes,
+        },
+        "Suivi mis à jour"
+      );
+    } else if (modal.kind === "settings") {
+      onSend(
+        {
+          vidangeKmThreshold: num("vidangeKmThreshold"),
+          inspectionDaysThreshold: num("inspectionDaysThreshold"),
+          insuranceDaysThreshold: num("insuranceDaysThreshold"),
+          enabled: Object.fromEntries(
+            Object.entries(f)
+              .filter(([k]) => k.startsWith("en_"))
+              .map(([k, v]) => [k.slice(3), Boolean(v)])
+          ),
+        },
+        "Seuils enregistrés",
+        "/api/admin/notifications/settings",
+        "PUT"
+      );
+    }
+  };
+
+  const disabled =
+    saving ||
+    (modal.kind === "maintenance" && String(f.description || "").trim().length < 2) ||
+    (modal.kind === "vidange" && num("mileage") === undefined);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4">
+      <div className="w-full sm:max-w-lg max-h-[92vh] flex flex-col rounded-t-2xl sm:rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl text-xs">
+        <div className="flex items-center justify-between p-5 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">{title}</h3>
+            {u && (
+              <p className="text-[11px] text-slate-500">
+                <span className="font-mono font-bold">{u.label}</span> · {u.brand} {u.model}
+              </p>
+            )}
+          </div>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-3 overflow-y-auto flex-1">
+          {modal.kind === "vidange" && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Kilométrage (km)">
+                  <input type="number" className={inputCls} value={String(f.mileage)} onChange={set("mileage")} />
+                </Field>
+                <Field label="Date">
+                  <input type="date" className={inputCls} value={String(f.date)} onChange={set("date")} />
+                </Field>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Prochaine vidange calculée : {fmtKm((num("mileage") || 0) + (u?.vidangeInterval || 10000))}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Coût (DT)">
+                  <input type="number" className={inputCls} value={String(f.cost)} onChange={set("cost")} />
+                </Field>
+                <Field label="Garage / prestataire">
+                  <input className={inputCls} value={String(f.provider)} onChange={set("provider")} />
+                </Field>
+              </div>
+              <Field label="Remarques">
+                <input className={inputCls} value={String(f.notes)} onChange={set("notes")} />
+              </Field>
+            </>
+          )}
+
+          {modal.kind === "inspection" && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Date de la visite">
+                  <input type="date" className={inputCls} value={String(f.date)} onChange={set("date")} />
+                </Field>
+                <Field label="Prochaine échéance">
+                  <input type="date" className={inputCls} value={String(f.nextDate)} onChange={set("nextDate")} />
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Coût (DT)">
+                  <input type="number" className={inputCls} value={String(f.cost)} onChange={set("cost")} />
+                </Field>
+                <Field label="Centre">
+                  <input className={inputCls} value={String(f.provider)} onChange={set("provider")} />
+                </Field>
+              </div>
+              <Field label="Remarques">
+                <input className={inputCls} value={String(f.notes)} onChange={set("notes")} />
+              </Field>
+            </>
+          )}
+
+          {modal.kind === "maintenance" && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Type">
+                  <select className={inputCls} value={String(f.type)} onChange={set("type")}>
+                    {["repair", "scheduled", "unscheduled", "tyres", "bodywork", "inspection"].map((t) => (
+                      <option key={t} value={t}>
+                        {TYPE_LABEL[t]}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Statut">
+                  <select className={inputCls} value={String(f.status)} onChange={set("status")}>
+                    <option value="scheduled">Planifiée</option>
+                    <option value="in_progress">En cours (véhicule immobilisé)</option>
+                    <option value="completed">Terminée</option>
+                  </select>
+                </Field>
+              </div>
+              <Field label="Description">
+                <input className={inputCls} value={String(f.description)} onChange={set("description")} placeholder="ex. Plaquettes de frein avant" />
+              </Field>
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="Date">
+                  <input type="date" className={inputCls} value={String(f.date)} onChange={set("date")} />
+                </Field>
+                <Field label="Km">
+                  <input type="number" className={inputCls} value={String(f.mileage)} onChange={set("mileage")} />
+                </Field>
+                <Field label="Coût (DT)">
+                  <input type="number" className={inputCls} value={String(f.cost)} onChange={set("cost")} />
+                </Field>
+              </div>
+              <Field label="Garage / prestataire">
+                <input className={inputCls} value={String(f.provider)} onChange={set("provider")} />
+              </Field>
+              <label className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300">
+                <input type="checkbox" checked={Boolean(f.immobilize)} onChange={set("immobilize")} />
+                Immobiliser le véhicule (retiré de la location jusqu&apos;à la fin)
+              </label>
+            </>
+          )}
+
+          {modal.kind === "edit" && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Kilométrage actuel">
+                  <input type="number" className={inputCls} value={String(f.mileage)} onChange={set("mileage")} />
+                </Field>
+                <Field label="Statut">
+                  <select className={inputCls} value={String(f.unitStatus)} onChange={set("unitStatus")}>
+                    <option value="active">En service</option>
+                    <option value="maintenance">Au garage</option>
+                    <option value="out_of_service">Hors service</option>
+                  </select>
+                </Field>
+                <Field label="Dernière vidange (km)">
+                  <input type="number" className={inputCls} value={String(f.lastVidangeMileage)} onChange={set("lastVidangeMileage")} />
+                </Field>
+                <Field label="Intervalle vidange (km)">
+                  <input type="number" className={inputCls} value={String(f.vidangeInterval)} onChange={set("vidangeInterval")} />
+                </Field>
+                <Field label="Visite technique (échéance)">
+                  <input type="date" className={inputCls} value={String(f.technicalInspectionDate)} onChange={set("technicalInspectionDate")} />
+                </Field>
+                <Field label="Assurance (échéance)">
+                  <input type="date" className={inputCls} value={String(f.insuranceExpiryDate)} onChange={set("insuranceExpiryDate")} />
+                </Field>
+                <Field label="Prochain entretien">
+                  <input type="date" className={inputCls} value={String(f.nextMaintenanceDate)} onChange={set("nextMaintenanceDate")} />
+                </Field>
+              </div>
+              <Field label="Notes garage">
+                <textarea className={`${inputCls} h-20 py-2`} value={String(f.unitNotes)} onChange={set("unitNotes")} />
+              </Field>
+            </>
+          )}
+
+          {modal.kind === "history" && u && (
+            <div className="space-y-2">
+              {u.history.length === 0 && <p className="text-slate-500">Aucune intervention enregistrée.</p>}
+              {u.history.map((h) => (
+                <div key={h._id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold">{TYPE_LABEL[h.type] || h.type}</span>
+                    <span className="text-slate-500">{fmtDate(h.startDate)}</span>
+                  </div>
+                  <p className="text-slate-600 dark:text-slate-300 mt-0.5">{h.description}</p>
+                  <div className="flex items-center justify-between mt-1.5 text-[11px] text-slate-500">
+                    <span>
+                      {STATUS_LABEL[h.status] || h.status}
+                      {h.mileage ? ` · ${fmtKm(h.mileage)}` : ""}
+                      {h.cost ? ` · ${h.cost} DT` : ""}
+                      {h.provider ? ` · ${h.provider}` : ""}
+                    </span>
+                    {(h.status === "scheduled" || h.status === "in_progress") && (
+                      <span className="flex gap-1">
+                        {h.status === "scheduled" && (
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => onSend({ action: "update_maintenance", recordId: h._id, status: "in_progress" }, "Intervention démarrée")}
+                            className={`${btn} px-2 py-1 border border-slate-200 dark:border-slate-700`}
+                          >
+                            Démarrer
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => onSend({ action: "update_maintenance", recordId: h._id, status: "completed" }, "Intervention terminée")}
+                          className={`${btn} px-2 py-1 bg-emerald-600 text-white`}
+                        >
+                          Terminer
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {modal.kind === "settings" && (
+            <>
+              <p className="text-slate-500">
+                Exemple : avec un seuil de 2 000 km, vous recevez « Vidange dans 2 000 km — 245 TU 7890 ».
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="Vidange (km avant)">
+                  <input type="number" className={inputCls} value={String(f.vidangeKmThreshold)} onChange={set("vidangeKmThreshold")} />
+                </Field>
+                <Field label="Visite tech. (jours avant)">
+                  <input type="number" className={inputCls} value={String(f.inspectionDaysThreshold)} onChange={set("inspectionDaysThreshold")} />
+                </Field>
+                <Field label="Assurance (jours avant)">
+                  <input type="number" className={inputCls} value={String(f.insuranceDaysThreshold)} onChange={set("insuranceDaysThreshold")} />
+                </Field>
+              </div>
+              <div className="grid grid-cols-2 gap-2 pt-2">
+                {[
+                  ["vidange", "Alertes vidange"],
+                  ["inspection", "Alertes visite technique"],
+                  ["insurance", "Alertes assurance"],
+                  ["maintenance", "Entretiens planifiés"],
+                  ["pickups", "Départs du jour"],
+                  ["returns", "Retours du jour / retards"],
+                ].map(([k, label]) => (
+                  <label key={k} className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300">
+                    <input type="checkbox" checked={Boolean(f[`en_${k}`])} onChange={set(`en_${k}`)} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              {!settings && (
+                <p className="flex items-center gap-1 text-amber-600">
+                  <ShieldAlert className="w-4 h-4" /> Paramètres non chargés.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+
+        {modal.kind !== "history" && (
+          <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
+            <button type="button" onClick={onClose} className={`${btn} bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300`}>
+              Annuler
+            </button>
+            <button type="button" disabled={disabled} onClick={submit} className={`${btn} bg-blue-600 hover:bg-blue-500 text-white`}>
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Enregistrer
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

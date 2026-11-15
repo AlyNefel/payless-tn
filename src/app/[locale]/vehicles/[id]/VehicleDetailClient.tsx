@@ -249,13 +249,13 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
                 transition={{ duration: 0.5, delay: 0.1 }}
                 className="relative"
               >
-                <div className="relative aspect-[16/9] rounded-2xl overflow-hidden bg-white/5 border border-white/10">
+                <div className="relative aspect-[4/3] sm:aspect-[16/10] rounded-2xl overflow-hidden bg-white border border-white/10">
                   <VehicleImage
                     src={images[activeImage]}
                     alt={`${vehicle.brand} ${vehicle.model} — photo ${activeImage + 1}`}
                     fill
                     sizes="(min-width: 1024px) 66vw, 100vw"
-                    className="object-cover"
+                    className="object-contain p-2 sm:p-4"
                     priority={activeImage === 0}
                   />
                   {/* Navigation */}

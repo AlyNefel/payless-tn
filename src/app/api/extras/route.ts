@@ -14,7 +14,7 @@ export async function GET() {
   try {
     await connectDB();
     const extras = await Extra.find({ isActive: true })
-      .select("name description icon price pricingType maxQuantity order")
+      .select("name description icon price pricingType maxQuantity order selectionMode amountMin amountMax amountStep")
       .sort({ order: 1, price: 1 })
       .lean();
 
@@ -27,7 +27,8 @@ export async function GET() {
           pricingType: normalizePricingType(e.pricingType),
         })),
       },
-      { headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" } }
+      // Short cache: an option hidden by the admin must disappear from the site within seconds.
+      { headers: { "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10" } }
     );
   } catch (error) {
     console.error("Error fetching extras:", error);

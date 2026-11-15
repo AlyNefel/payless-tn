@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { requireManager } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const guard = await requireManager();
+  const guard = await requirePermission("settings", "edit");
   if (!guard.ok) return guard.response;
 
   try {

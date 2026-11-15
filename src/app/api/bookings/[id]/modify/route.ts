@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
-import { Booking, Vehicle, Customer, Location, Notification, User } from "@/models";
+import { Booking, Vehicle, Customer, Location } from "@/models";
 import { sendEmail } from "@/lib/email";
 import { formatDate } from "@/lib/utils";
 import { computeRentalDays, extraLineTotal, onlySelected } from "@/lib/extras";
 import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
+import { notifyStaff } from "@/lib/notify";
+import { revalidateAssignments } from "@/lib/fleetUnits";
 import mongoose from "mongoose";
 import { BOOKING_ACCESS_DENIED, canAccessBooking } from "@/lib/bookingAccess";
 import { escapeHtml } from "@/lib/apiAuth";
@@ -88,9 +90,6 @@ export async function POST(
       );
     }
 
-    // Find admin user to link notification to
-    const adminUser = await User.findOne({ role: { $in: ["admin", "superadmin", "manager"] } }).select("_id");
-    const adminRecipientId = adminUser?._id || new mongoose.Types.ObjectId();
 
     // -------------------------------------------------------------
     // CASE A: IF STATUS IS "pending" (Not yet confirmed by agency)
@@ -153,13 +152,14 @@ export async function POST(
       });
 
       await booking.save();
+      // Dates changed: keep the assigned car if still free, otherwise pick another one.
+      await revalidateAssignments(String(booking._id)).catch((e) => console.error("revalidateAssignments:", e));
 
       // Create Admin In-App Notification
       try {
-        await Notification.create({
-          recipientId: adminRecipientId,
-          recipientType: "user",
+        await notifyStaff({
           type: "booking_modified_by_customer",
+          severity: "warning",
           title: {
             fr: `Modification réservation ${booking.bookingReference}`,
             en: `Booking Modified: ${booking.bookingReference}`,
@@ -171,9 +171,8 @@ export async function POST(
             ar: `قام العميل بتعديل الحجز رقم ${booking.bookingReference} في انتظار التأكيد.`,
           },
           link: `/admin/bookings/${booking._id}`,
-          isRead: false,
           data: {
-            bookingId: booking._id,
+            bookingId: String(booking._id),
             bookingReference: booking.bookingReference,
             type: "direct_modification",
           },
@@ -247,10 +246,9 @@ export async function POST(
 
       // Create High-Priority Admin Notification
       try {
-        await Notification.create({
-          recipientId: adminRecipientId,
-          recipientType: "user",
+        await notifyStaff({
           type: "booking_modification_request",
+          severity: "critical",
           title: {
             fr: `⚠️ Demande de modification : ${booking.bookingReference}`,
             en: `⚠️ Modification Requested: ${booking.bookingReference}`,
@@ -262,9 +260,8 @@ export async function POST(
             ar: `طلب العميل تعديل موعد الحجز المؤكد ${booking.bookingReference}. يتطلب موافقة الإدارة.`,
           },
           link: `/admin/bookings/${booking._id}`,
-          isRead: false,
           data: {
-            bookingId: booking._id,
+            bookingId: String(booking._id),
             bookingReference: booking.bookingReference,
             type: "approval_required",
           },

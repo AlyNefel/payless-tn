@@ -5,6 +5,7 @@ import { getFleetStockMap, getUnavailableVehicleIds } from "@/lib/availability";
 import { sanitizeVehicleForClient } from "@/lib/sanitize";
 import { escapeRegex, isStaffRequest } from "@/lib/apiAuth";
 import mongoose from "mongoose";
+import { effectiveMinDays, getGlobalMinRentalDays } from "@/lib/rentalRules";
 
 export const dynamic = "force-dynamic";
 
@@ -234,6 +235,9 @@ export async function GET(request: NextRequest) {
       Vehicle.countDocuments(query),
     ]);
 
+    // Fleet-wide minimum rental period (a vehicle's own minimum wins when higher).
+    const globalMinDays = await getGlobalMinRentalDays();
+
     // Format & Enrich with stock counters, and sanitize for non-admin
     const processedVehicles = vehicles.map((v: any) => {
       const vId = v._id.toString();
@@ -244,8 +248,11 @@ export async function GET(request: NextRequest) {
         isAvailable: v.status === "available",
       };
 
+      const minDays = effectiveMinDays(v, globalMinDays);
       const enriched = {
         ...v,
+        minRentalDays: minDays,
+        pricing: { ...(v.pricing || {}), minRentalDays: minDays },
         totalUnits: stock.totalUnits,
         availableUnits: stock.availableUnits,
         bookedUnits: stock.bookedUnits,

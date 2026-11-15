@@ -7,6 +7,7 @@ import VehicleCategory from "@/models/VehicleCategory";
 import { sanitizeQuery } from "@/lib/utils";
 import { requireManager, requireStaff } from "@/lib/apiAuth";
 import { deleteImages, markImagesAttached } from "@/lib/cloudinary";
+import { requirePermission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,23 @@ const vehicleInputSchema = z.object({
     deposit: z.number().min(0).max(1000000),
   }),
   images: z.array(imageSchema).max(20).default([]),
+  /** Home agency (null = central fleet). */
+  location: z
+    .string()
+    .refine((v) => mongoose.Types.ObjectId.isValid(v), "Agence invalide")
+    .nullable()
+    .optional(),
+  /** Physical cars (one per license plate). Existing rows keep their mileage / maintenance data. */
+  units: z
+    .array(
+      z.object({
+        _id: z.string().optional(),
+        licensePlate: z.string().trim().max(20).default(""),
+        status: z.enum(["active", "maintenance", "out_of_service"]).default("active"),
+      })
+    )
+    .max(200)
+    .optional(),
   description: z.object({ fr: z.string().max(3000), en: z.string().max(3000), ar: z.string().max(3000) }).partial().optional(),
 });
 
@@ -71,6 +89,9 @@ function toVehicleFields(input: VehicleInput) {
     licensePlate: input.licensePlate.toUpperCase(),
     ...(input.mileage !== undefined ? { mileage: input.mileage } : {}),
     totalUnits: input.totalUnits,
+    ...(input.location !== undefined
+      ? { location: input.location ? new mongoose.Types.ObjectId(input.location) : null }
+      : {}),
     features: input.features,
     hasAirConditioning: input.features.includes("A/C"),
     minRentalDays: input.minRentalDays || 1,
@@ -112,6 +133,39 @@ const validationError = (error: z.ZodError) =>
     { status: 400 }
   );
 
+type UnitInput = NonNullable<VehicleInput["units"]>;
+
+/** Merges edited plate rows with stored units, keeping mileage & maintenance history. */
+function mergeUnits(input: UnitInput, previous: any[] = [], fallback: { mileage?: number } = {}) {
+  const byId = new Map(previous.map((u) => [String(u._id), u]));
+  return input.map((row) => {
+    const prev = row._id ? byId.get(row._id) : undefined;
+    if (prev) return { ...prev, licensePlate: row.licensePlate.toUpperCase(), status: row.status };
+    return {
+      licensePlate: row.licensePlate.toUpperCase(),
+      status: row.status,
+      mileage: fallback.mileage || 0,
+      lastVidangeMileage: fallback.mileage || 0,
+      vidangeInterval: 10000,
+      nextVidangeMileage: (fallback.mileage || 0) + 10000,
+    };
+  });
+}
+
+/** A plate must be unique across the whole fleet (all models). */
+async function findPlateConflict(plates: string[], excludeVehicleId?: string): Promise<string | null> {
+  const clean = plates.map((p) => p.trim().toUpperCase()).filter(Boolean);
+  const dup = clean.find((p, i) => clean.indexOf(p) !== i);
+  if (dup) return dup;
+  if (!clean.length) return null;
+  const q: Record<string, unknown> = { $or: [{ licensePlate: { $in: clean } }, { "units.licensePlate": { $in: clean } }] };
+  if (excludeVehicleId) q._id = { $ne: new mongoose.Types.ObjectId(excludeVehicleId) };
+  const other = await Vehicle.findOne(q).select("licensePlate units.licensePlate").lean();
+  if (!other) return null;
+  const used = new Set([other.licensePlate, ...(other.units || []).map((u) => u.licensePlate)]);
+  return clean.find((p) => used.has(p)) || null;
+}
+
 function duplicatePlate(error: unknown) {
   return (error as { code?: number })?.code === 11000;
 }
@@ -119,7 +173,7 @@ function duplicatePlate(error: unknown) {
 /* ───────────────────────────── Handlers ───────────────────────────── */
 
 export async function GET(request: NextRequest) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("fleet", "view");
   if (!guard.ok) return guard.response;
 
   try {
@@ -145,6 +199,7 @@ export async function GET(request: NextRequest) {
     const [vehicles, total, categories] = await Promise.all([
       Vehicle.find(query)
         .populate("categoryId", "name slug")
+        .populate("location", "name city")
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -161,7 +216,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requireManager();
+  const guard = await requirePermission("fleet", "edit");
   if (!guard.ok) return guard.response;
 
   const parsed = vehicleInputSchema.safeParse(await request.json().catch(() => ({})));
@@ -170,8 +225,18 @@ export async function POST(request: NextRequest) {
   try {
     await connectDB();
     const fields = toVehicleFields(parsed.data);
+    const unitsInput: UnitInput = parsed.data.units?.length
+      ? parsed.data.units
+      : [{ licensePlate: parsed.data.licensePlate, status: "active" }];
+    const conflict = await findPlateConflict(unitsInput.map((u) => u.licensePlate));
+    if (conflict) {
+      return NextResponse.json({ success: false, error: `L'immatriculation ${conflict} est déjà utilisée.` }, { status: 409 });
+    }
+    const units = mergeUnits(unitsInput, [], { mileage: parsed.data.mileage });
     const vehicle = await Vehicle.create({
       ...nest(fields),
+      units,
+      totalUnits: Math.max(1, units.filter((u) => u.status === "active").length),
       pricing: { ...(nest(fields).pricing as object), currency: "TND" },
       availableUnits: parsed.data.totalUnits,
       status: "available",
@@ -194,7 +259,7 @@ const statusOnlySchema = z.object({
 });
 
 export async function PUT(request: NextRequest) {
-  const guard = await requireManager();
+  const guard = await requirePermission("fleet", "edit");
   if (!guard.ok) return guard.response;
 
   const body = await request.json().catch(() => ({}));
@@ -214,16 +279,42 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: true, vehicle });
     }
 
+    // Lightweight home-agency move from the location manager.
+    if (Object.keys(body).length === 2 && "location" in body) {
+      const loc = body.location;
+      if (loc !== null && !mongoose.Types.ObjectId.isValid(String(loc))) {
+        return NextResponse.json({ success: false, error: "Agence invalide" }, { status: 400 });
+      }
+      const vehicle = await Vehicle.findByIdAndUpdate(
+        id,
+        { $set: { location: loc ? new mongoose.Types.ObjectId(String(loc)) : null } },
+        { returnDocument: "after" }
+      );
+      if (!vehicle) return NextResponse.json({ success: false, error: "Vehicle not found" }, { status: 404 });
+      return NextResponse.json({ success: true, vehicle });
+    }
+
     const parsed = vehicleInputSchema.safeParse(body);
     if (!parsed.success) return validationError(parsed.error);
 
-    const previous = await Vehicle.findById(id).select("images").lean();
+    const previous = await Vehicle.findById(id).select("images units mileage").lean();
     if (!previous) return NextResponse.json({ success: false, error: "Vehicle not found" }, { status: 404 });
+
+    const setFields: Record<string, unknown> = toVehicleFields(parsed.data);
+    if (parsed.data.units?.length) {
+      const conflict = await findPlateConflict(parsed.data.units.map((u) => u.licensePlate), id);
+      if (conflict) {
+        return NextResponse.json({ success: false, error: `L'immatriculation ${conflict} est déjà utilisée.` }, { status: 409 });
+      }
+      const units = mergeUnits(parsed.data.units, previous.units || [], { mileage: parsed.data.mileage });
+      setFields.units = units;
+      setFields.totalUnits = Math.max(1, units.filter((u) => u.status === "active").length);
+    }
 
     // $set with dotted pricing keys keeps currency & seasonalPrices intact.
     const vehicle = await Vehicle.findByIdAndUpdate(
       id,
-      { $set: toVehicleFields(parsed.data) },
+      { $set: setFields },
       { returnDocument: "after", runValidators: true }
     );
 
@@ -244,7 +335,7 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const guard = await requireManager();
+  const guard = await requirePermission("fleet", "edit");
   if (!guard.ok) return guard.response;
 
   try {

@@ -72,7 +72,7 @@ function categoryLabel(cat: string, locale: string): string {
 function SkeletonCard() {
   return (
     <div className="rounded-2xl bg-card shadow-sm overflow-hidden animate-pulse">
-      <div className="h-48 bg-muted" />
+      <div className="aspect-[16/11] bg-muted" />
       <div className="p-5 space-y-3">
         <div className="h-4 bg-muted rounded w-3/4" />
         <div className="h-3 bg-muted rounded w-1/2" />
@@ -115,7 +115,7 @@ export function FeaturedFleet() {
           const img =
             v.images?.find((i: any) => i.isPrimary)?.url ||
             v.images?.[0]?.url ||
-            "/placeholder-car.jpg";
+            "";
 
           return {
             id: String(v._id),
@@ -158,7 +158,8 @@ export function FeaturedFleet() {
           { id: "sedan" as CategoryFilter, label: "Berlines Exécutives" },
           { id: "luxury" as CategoryFilter, label: "Prestige & Haut de Gamme" },
         ],
-        kmLabel: "Illimité KM",
+        kmLabel: "Kilométrage illimité",
+        fromLabel: "À partir de",
         perDay: "/ jour",
         depositLabel: "Caution",
         detailsBtn: "Détails",
@@ -181,7 +182,8 @@ export function FeaturedFleet() {
           { id: "sedan" as CategoryFilter, label: "Executive Sedans" },
           { id: "luxury" as CategoryFilter, label: "Prestige & Luxury" },
         ],
-        kmLabel: "Unlimited KM",
+        kmLabel: "Unlimited mileage",
+        fromLabel: "From",
         perDay: "/ day",
         depositLabel: "Deposit",
         detailsBtn: "Details",
@@ -205,6 +207,7 @@ export function FeaturedFleet() {
           { id: "luxury" as CategoryFilter, label: "فاخرة وبريستيج" },
         ],
         kmLabel: "مسافة غير محدودة",
+        fromLabel: "ابتداءً من",
         perDay: "/ يوم",
         depositLabel: "الوديعة",
         detailsBtn: "تفاصيل",
@@ -288,127 +291,100 @@ export function FeaturedFleet() {
                 <motion.div
                   key={vehicle.id}
                   layout
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
+                  initial={{ opacity: 0, y: 16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.96 }}
                   transition={{ duration: 0.3 }}
-                  className="charging-card group rounded-2xl bg-card shadow-sm flex flex-col justify-between overflow-hidden relative z-[1]"
+                  className="group rounded-3xl bg-card border border-border/70 dark:border-neutral-800 shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 flex flex-col overflow-hidden"
                 >
-                  <div>
-                    {/* Image Card Top */}
-                    <div className="relative h-48 sm:h-52 w-full bg-slate-900 overflow-hidden">
-                      <VehicleImage
-                        src={vehicle.image}
-                        alt={`${vehicle.brand} ${vehicle.model}`}
-                        fill
-                        sizes="(min-width: 1280px) 25vw, (min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
-                        className="object-cover group-hover:scale-105 transition-transform duration-500"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                  {/* Image — full-resolution photo, 4:3 so the car is not cropped away on phones */}
+                  <Link
+                    href={`/${locale}/vehicles/${vehicle.id}`}
+                    className="relative block aspect-[16/11] w-full overflow-hidden bg-white"
+                    aria-label={`${vehicle.brand} ${vehicle.model}`}
+                  >
+                    <VehicleImage
+                      src={vehicle.image}
+                      alt={`${vehicle.brand} ${vehicle.model}`}
+                      fill
+                      sizes="(min-width: 1280px) 25vw, (min-width: 1024px) 33vw, (min-width: 768px) 50vw, 100vw"
+                      className="object-contain p-3 group-hover:scale-[1.05] transition-transform duration-700"
+                    />
+                    <span className="absolute top-3 left-3 px-2.5 py-1 rounded-full bg-slate-900/85 text-[11px] font-bold text-white shadow-sm">
+                      {vehicle.categoryLabel}
+                    </span>
+                    {vehicle.featuredTag && (
+                      <span className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-600 text-white shadow-md uppercase tracking-wider">
+                        {vehicle.featuredTag}
+                      </span>
+                    )}
+                  </Link>
 
-                      {/* Badge top right */}
-                      {vehicle.featuredTag && (
-                        <div className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-600/90 text-white backdrop-blur-md shadow-md uppercase tracking-wider">
-                          {vehicle.featuredTag}
-                        </div>
-                      )}
-
-                      {/* Category bottom left */}
-                      <div className="absolute bottom-3 left-3">
-                        <span className="px-2.5 py-0.5 rounded-md bg-white/20 text-white text-[11px] font-semibold backdrop-blur-md">
-                          {vehicle.categoryLabel}
-                        </span>
-                      </div>
+                  {/* Body */}
+                  <div className="p-5 flex flex-col gap-4 flex-1">
+                    <div>
+                      <h3 className="text-lg font-bold text-foreground leading-snug">
+                        <Link href={`/${locale}/vehicles/${vehicle.id}`} className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
+                          {vehicle.brand} {vehicle.model}
+                        </Link>
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {vehicle.year} · {tl.kmLabel}
+                      </p>
                     </div>
 
-                    {/* Body Content */}
-                    <div className="p-5 space-y-4">
-                      <div>
-                        <h3 className="text-lg font-bold text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                          <Link href={`/${locale}/vehicles/${vehicle.id}`} className="hover:underline focus-visible:underline">
-                            {vehicle.brand} {vehicle.model}
-                          </Link>
-                        </h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">{tl.kmLabel}</p>
-                      </div>
-
-                      {/* Specs Row */}
-                      <div className="grid grid-cols-3 gap-2 py-2.5 border-y border-border/60 text-xs text-muted-foreground">
-                        <div className="flex items-center gap-1.5">
-                          <Gauge className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                          <span className="truncate">{getVehicleTransmissionLabel(vehicle.transmission, locale)}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <Fuel className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                          <span className="truncate">{getVehicleFuelLabel(vehicle.fuelType, locale)}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <Users className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                          <span>{vehicle.seats} pl.</span>
-                        </div>
-                      </div>
-
-                      {/* Features Badges */}
-                      <div className="flex flex-wrap gap-1.5">
-                        {vehicle.features.slice(0, 3).map((feat, idx) => (
-                          <span
-                            key={idx}
-                            className="px-2 py-0.5 rounded bg-muted/70 dark:bg-neutral-800/80 text-muted-foreground dark:text-neutral-200 text-[10px] font-medium border border-transparent dark:border-neutral-700/50"
-                          >
-                            {getVehicleFeatureLabel(feat, locale)}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Pricing & CTA */}
-                  <div className="p-5 pt-0">
-                    <div className="pt-3 border-t border-border/60 flex items-baseline justify-between">
-                      <div>
+                    <div className="flex items-end justify-between">
+                      <div className="leading-tight">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{tl.fromLabel}</div>
                         <div className="flex items-baseline gap-1">
-                          <span className="text-2xl font-black text-foreground">
-                            {vehicle.dailyRate}
-                          </span>
+                          <span className="text-2xl font-black text-foreground">{vehicle.dailyRate}</span>
                           <span className="text-xs font-bold text-blue-600 dark:text-blue-400">TND</span>
-                          <span className="text-[11px] text-muted-foreground font-mono">
-                            (≈ {vehicle.dailyRateEUR} €)
-                          </span>
                           <span className="text-[11px] text-muted-foreground">{tl.perDay}</span>
                         </div>
-                        <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                          <ShieldCheck className="w-3 h-3 text-emerald-500" />
-                          <span>
-                            {tl.depositLabel} : {vehicle.deposit} TND
-                          </span>
-                        </div>
+                      </div>
+                      <span className="text-[11px] font-mono text-muted-foreground">≈ {vehicle.dailyRateEUR} €</span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
+                      <div className="flex flex-col items-center gap-1 py-2 rounded-xl bg-muted/60 dark:bg-neutral-900">
+                        <Gauge className="w-4 h-4 text-blue-500" />
+                        <span className="truncate max-w-full px-1">{getVehicleTransmissionLabel(vehicle.transmission, locale)}</span>
+                      </div>
+                      <div className="flex flex-col items-center gap-1 py-2 rounded-xl bg-muted/60 dark:bg-neutral-900">
+                        <Fuel className="w-4 h-4 text-amber-500" />
+                        <span className="truncate max-w-full px-1">{getVehicleFuelLabel(vehicle.fuelType, locale)}</span>
+                      </div>
+                      <div className="flex flex-col items-center gap-1 py-2 rounded-xl bg-muted/60 dark:bg-neutral-900">
+                        <Users className="w-4 h-4 text-emerald-500" />
+                        <span>{vehicle.seats} pl.</span>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 mt-4">
+                    <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                      <span>
+                        {tl.depositLabel} : {vehicle.deposit} TND
+                      </span>
+                    </div>
+
+                    <div className="mt-auto grid grid-cols-2 gap-2">
                       <Link
-                        href={`/${locale}/vehicles`}
-                        className="inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl border border-input hover:bg-muted text-xs font-semibold text-foreground transition-colors"
+                        href={`/${locale}/vehicles/${vehicle.id}`}
+                        className="inline-flex items-center justify-center gap-1.5 px-3 py-3 rounded-xl border border-input hover:bg-muted text-xs font-semibold text-foreground transition-colors"
                       >
-                        <Eye className="w-3.5 h-3.5" />
+                        <Eye className="w-4 h-4" />
                         <span>{tl.detailsBtn}</span>
                       </Link>
-
                       <Link
                         href={`/${locale}/booking?vehicleId=${vehicle.id}&brand=${encodeURIComponent(
                           vehicle.brand
                         )}&model=${encodeURIComponent(vehicle.model)}`}
-                        className="inline-flex items-center justify-center gap-1 px-3 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wider shadow-sm transition-all transform hover:-translate-y-0.5 active:translate-y-0"
+                        className="inline-flex items-center justify-center gap-1.5 px-3 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wide shadow-md shadow-blue-600/25 transition-all active:scale-[0.98]"
                       >
-                        <Sparkles className="w-3 h-3" />
                         <span>{tl.bookBtn}</span>
+                        <ArrowRight className="w-4 h-4 rtl-flip" />
                       </Link>
                     </div>
-                  </div>
-
-                  {/* Smoke / mist rising from card bottom */}
-                  <div className="smoke-wrap" aria-hidden="true">
-                    <span /><span /><span /><span /><span />
                   </div>
                 </motion.div>
               ))}
