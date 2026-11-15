@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import nodemailer from "nodemailer";
-import { requireManager } from "@/lib/apiAuth";
 import { requirePermission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";

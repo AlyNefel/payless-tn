@@ -6,7 +6,6 @@ import { routing } from "./i18n/routing";
 
 const intlMiddleware = createMiddleware(routing);
 
-const STAFF_ROLES = ["superadmin", "admin", "manager", "staff", "agent"];
 
 async function hasStaffSession(request: NextRequest): Promise<boolean> {
   const secret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
@@ -21,7 +20,8 @@ async function hasStaffSession(request: NextRequest): Promise<boolean> {
       salt: secureCookie ? "__Secure-authjs.session-token" : "authjs.session-token",
     });
     const role = String((token as { role?: string } | null)?.role || "").toLowerCase();
-    return STAFF_ROLES.includes(role);
+    // Any back-office role (system or custom RBAC role); customers never sign in here.
+    return Boolean(role) && role !== "client";
   } catch {
     return false;
   }

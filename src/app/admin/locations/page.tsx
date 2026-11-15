@@ -28,6 +28,7 @@ import {
   Eye,
 } from "lucide-react";
 import type { LocationItem } from "../mockData";
+import { ActionMenu, ViewToggle, standardActions, useViewMode, usePermissions } from "@/components/admin/ui";
 
 /** Fleet model as needed by the location manager (real data from /api/admin/vehicles). */
 interface LocVehicle {
@@ -58,7 +59,11 @@ export default function LocationManagerPage() {
   const [targetLocationId, setTargetLocationId] = useState("");
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [editingLocation, setEditingLocation] = useState<LocationItem | null>(null);
-  const [viewMode, setViewMode] = useState<"card" | "table">("table");
+  const [savedView, setSavedView] = useViewMode("locations", "table");
+  const viewMode: "card" | "table" = savedView === "grid" ? "card" : "table";
+  const { can } = usePermissions();
+  /** Set when the editor is opened from "Voir & modifier": shows the agency summary on top. */
+  const [editInfo, setEditInfo] = useState<{ cars: number; plates: string } | null>(null);
   const [actionMenuOpenId, setActionMenuOpenId] = useState<string | null>(null);
 
   const handleDeleteLocation = async (id: string, name: string) => {
@@ -283,6 +288,41 @@ export default function LocationManagerPage() {
     }
   };
 
+
+  /** Unified agency actions: Voir / Modifier / Voir & modifier, assign a car, delete. */
+  const locActions = (loc: LocationItem) => {
+    const cars = vehicles.filter((v) => v.locationId === loc.id);
+    return standardActions({
+      onView: () => setSelectedLocation(loc),
+      onEdit: () => {
+        setFormError("");
+        setEditInfo(null);
+        setEditingLocation({ ...loc });
+      },
+      onViewEdit: () => {
+        setFormError("");
+        setEditInfo({ cars: cars.length, plates: cars.flatMap((c) => (c.plates.length ? c.plates : [c.licensePlate])).filter(Boolean).join(", ") });
+        setEditingLocation({ ...loc });
+      },
+      onDelete: () => handleDeleteLocation(loc.id, loc.name),
+      deleteLabel: "Supprimer l'agence",
+      can: { edit: can("locations.edit"), delete: can("locations.delete") },
+      extra: can("fleet.edit")
+        ? [
+            {
+              key: "assign",
+              label: "Rattacher un véhicule",
+              icon: Plus,
+              onClick: () => {
+                setTargetLocationId(loc.id);
+                setShowAssignModal(true);
+              },
+            },
+          ]
+        : [],
+    });
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Toast Notification */}
@@ -415,33 +455,7 @@ export default function LocationManagerPage() {
             {filteredLocations.length} agences
           </span>
 
-          {/* View mode toggle: Table or Cards */}
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
-            <button
-              type="button"
-              onClick={() => setViewMode("table")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                viewMode === "table"
-                  ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
-                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              <List className="w-3.5 h-3.5" />
-              <span>Tableau</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("card")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                viewMode === "card"
-                  ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
-                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
-              }`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-              <span>Cartes</span>
-            </button>
-          </div>
+          <ViewToggle value={savedView} onChange={setSavedView} />
         </div>
       </div>
 
@@ -540,74 +554,7 @@ export default function LocationManagerPage() {
                         </span>
                       </td>
                       <td className="py-3.5 px-4 text-center relative">
-                        {/* Options Dropdown Menu */}
-                        <div className="relative inline-block text-left">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActionMenuOpenId(isMenuOpen ? null : loc.id);
-                            }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold shadow-sm transition-all cursor-pointer"
-                          >
-                            <span>Options</span>
-                            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-                          </button>
-
-                          {isMenuOpen && (
-                            <>
-                              <div
-                                className="fixed inset-0 z-30"
-                                onClick={() => setActionMenuOpenId(null)}
-                              />
-                              <div className="absolute right-0 mt-1 w-48 rounded-xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-xl py-1 z-40 text-xs text-left animate-in fade-in zoom-in-95">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingLocation({ ...loc });
-                                    setActionMenuOpenId(null);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3.5 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5 text-amber-500" />
-                                  <span>Modifier l'agence</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedLocation(loc);
-                                    setActionMenuOpenId(null);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3.5 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                                >
-                                  <Eye className="w-3.5 h-3.5 text-blue-500" />
-                                  <span>Voir la flotte</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setTargetLocationId(loc.id);
-                                    setShowAssignModal(true);
-                                    setActionMenuOpenId(null);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-3.5 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                                >
-                                  <Plus className="w-3.5 h-3.5 text-emerald-500" />
-                                  <span>Assigner un véhicule</span>
-                                </button>
-                                <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteLocation(loc.id, loc.name)}
-                                  className="w-full flex items-center gap-2 px-3.5 py-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span>Supprimer l'agence</span>
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
+                        <ActionMenu items={locActions(loc)} label={`Actions pour ${loc.name}`} size="sm" />
                       </td>
                     </tr>
                   );
@@ -711,14 +658,7 @@ export default function LocationManagerPage() {
 
                 {/* Bottom Card Actions */}
                 <div className="pt-4 mt-2 flex items-center justify-between gap-2">
-                  <button
-                    onClick={() => setEditingLocation({ ...loc })}
-                    className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-600/15 dark:hover:bg-amber-600/25 text-amber-700 dark:text-amber-400 font-semibold text-xs transition-colors border border-amber-200 dark:border-amber-500/30 flex items-center gap-1.5"
-                    title="Modifier les frais et paramètres de cette agence"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                    <span>Modifier</span>
-                  </button>
+                  <ActionMenu items={locActions(loc)} label={`Actions pour ${loc.name}`} />
 
                   <button
                     onClick={() => {
@@ -1156,6 +1096,11 @@ export default function LocationManagerPage() {
             </div>
 
             <form onSubmit={handleUpdateLocation} className="mt-4 space-y-3.5 text-xs">
+              {editInfo && (
+                <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40 text-[11px] text-slate-700 dark:text-slate-300">
+                  <b>{editInfo.cars}</b> modèle(s) rattaché(s){editInfo.plates ? ` : ${editInfo.plates}` : ""} · {editingLocation.isActive ? "Agence active sur le site" : "Agence désactivée"}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">

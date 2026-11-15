@@ -35,12 +35,13 @@ const ALIAS_MAP: Record<string, string[]> = {
 
 async function checkAdmin(request?: NextRequest) {
   const guard = await requirePermission("settings", request?.method === "GET" ? "view" : "edit");
-  return guard.ok ? guard.session : null;
+  return guard;
 }
 
 export async function GET(request: NextRequest) {
-  const session = await checkAdmin(request);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guard = await checkAdmin(request);
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   try {
     await connectDB();
@@ -118,8 +119,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const session = await checkAdmin(request);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guard = await checkAdmin(request);
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   try {
     await connectDB();

@@ -1666,11 +1666,12 @@ export async function seedDatabase(): Promise<SeedResult> {
       categories: catCount,
       vehicles: vCount,
       extras: exCount,
-      promotions: 3,
+      // Real counts (these used to be hard-coded and reported bookings that were never created).
+      promotions: await Promotion.countDocuments(),
       coupons: cCount,
-      customers: 2,
-      bookings: 2,
-      notifications: 5,
+      customers: await Customer.countDocuments(),
+      bookings: await Booking.countDocuments(),
+      notifications: await Notification.countDocuments(),
       settings: sCount,
     },
   };

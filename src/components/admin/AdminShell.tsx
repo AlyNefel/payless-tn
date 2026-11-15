@@ -38,7 +38,8 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { AdminLangProvider, useAdminLang } from "@/contexts/AdminLangContext";
-import { ROLE_LABELS, sectionForPath, type AccessLevel } from "@/lib/permissionsShared";
+import { sectionForPath, type AccessLevel } from "@/lib/permissionsShared";
+import { loadMe } from "./ui/usePermissions";
 import { NotificationToasts, severityColor, severityIcon, timeAgo, useLiveNotifications } from "./useLiveNotifications";
 
 interface NavItem {
@@ -113,7 +114,8 @@ const NAV_GROUPS: NavGroup[] = [
     icon: Settings,
     items: [
       { title: "Paramètres Agence", href: "/admin/settings", icon: Settings },
-      { title: "Utilisateurs & rôles", href: "/admin/users", icon: ShieldCheck },
+      { title: "Utilisateurs", href: "/admin/users", icon: Users },
+      { title: "Rôles & permissions", href: "/admin/roles", icon: ShieldCheck },
     ],
   },
   {
@@ -152,18 +154,15 @@ function AdminLayoutContent({
 
   // Role-based access: which sections the signed-in user may see / edit.
   const [access, setAccess] = useState<Record<string, AccessLevel> | null>(null);
-  const [me, setMe] = useState<{ name?: string; email?: string; role?: string } | null>(null);
+  const [me, setMe] = useState<{ name?: string; email?: string; role?: string; roleName?: string } | null>(null);
   useEffect(() => {
     if (pathname === "/admin/login") return;
-    fetch("/api/admin/me", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.success) {
-          setAccess(d.access);
-          setMe(d.user);
-        }
-      })
-      .catch(() => {});
+    loadMe(true).then((d) => {
+      if (d) {
+        setAccess(d.access);
+        setMe(d.user);
+      }
+    });
   }, [pathname === "/admin/login"]);
   const canSee = (href: string) => {
     if (!access) return true; // until loaded: APIs still enforce permissions server-side
@@ -334,7 +333,8 @@ function AdminLayoutContent({
     if (href === "/admin/notifications") return lang === "fr" ? "Notifications" : "Notifications";
     if (href === "/admin/emails") return lang === "fr" ? "Journal Emails" : "Email Logs";
     if (href === "/admin/settings") return lang === "fr" ? "Paramètres" : "Settings";
-    if (href === "/admin/users") return lang === "fr" ? "Utilisateurs & rôles" : "Users & roles";
+    if (href === "/admin/users") return lang === "fr" ? "Utilisateurs" : "Users";
+    if (href === "/admin/roles") return lang === "fr" ? "Rôles & permissions" : "Roles & permissions";
     return fallback;
   };
 
@@ -512,7 +512,7 @@ function AdminLayoutContent({
                   {me?.name || "…"}
                 </p>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                  {me?.role ? ROLE_LABELS[me.role] || me.role : ""}{me?.email ? ` · ${me.email}` : ""}
+                  {me?.roleName || me?.role || ""}{me?.email ? ` · ${me.email}` : ""}
                 </p>
               </div>
             </div>
@@ -703,8 +703,8 @@ function AdminLayoutContent({
               className="inline-flex items-center gap-1.5 px-2.5 py-2 sm:px-3.5 sm:py-2 rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-600 text-white text-xs font-semibold shadow-md shadow-blue-600/20 hover:shadow-blue-600/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
               <Plus className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden md:inline">+ Nouvelle Réservation</span>
-              <span className="md:hidden text-[11px] font-bold">+ Créer</span>
+              <span className="hidden md:inline">Nouvelle réservation</span>
+              <span className="md:hidden text-[11px] font-bold">Créer</span>
             </button>
 
             {/* Notifications Bell with Popover */}

@@ -173,6 +173,13 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
     }
   };
 
+  // "Modifier" from a list lands on #statut: scroll there once the booking is rendered.
+  useEffect(() => {
+    if (!loading && booking && window.location.hash) {
+      document.querySelector(window.location.hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [loading, booking]);
+
   useEffect(() => {
     fetchBooking();
     // Fetch fleet list for vehicle reassignment
@@ -563,8 +570,8 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left 2 Cols: Details & Vehicle */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Reservation Status & Lifecycle Manager */}
-          <div className="p-5 rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          {/* Reservation Status & Lifecycle Manager ("Modifier" deep-links here) */}
+          <div id="statut" className="scroll-mt-24 p-5 rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 flex items-center gap-2">
               <Clock className="w-4 h-4 text-blue-600" />
               <span>Gestion du Statut & Paiement</span>

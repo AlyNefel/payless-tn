@@ -78,7 +78,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requirePermission("options", "edit");
+  const guard = await requirePermission("options", "create");
   if (!guard.ok) return guard.response;
 
   const parsed = extraSchema.safeParse(await request.json().catch(() => ({})));
@@ -134,7 +134,7 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const guard = await requirePermission("options", "edit");
+  const guard = await requirePermission("options", "delete");
   if (!guard.ok) return guard.response;
 
   const id = new URL(request.url).searchParams.get("id") || "";

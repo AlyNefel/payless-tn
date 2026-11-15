@@ -39,7 +39,9 @@ export async function requireRole(
       response: NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 }),
     };
   }
-  if (!roles.includes(role)) {
+  // Custom RBAC roles are back-office roles too: any non-client role counts as staff.
+  const allowed = roles === STAFF_ROLES ? role !== "client" : roles.includes(role);
+  if (!allowed) {
     return {
       ok: false,
       response: NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 }),
@@ -55,7 +57,7 @@ export const requireSuperadmin = () => requireRole(SUPERADMIN_ROLES);
 /** True when the current request comes from an authenticated back-office user. */
 export async function isStaffRequest(): Promise<boolean> {
   const { session, role } = await getSessionRole();
-  return Boolean(session && (STAFF_ROLES as readonly string[]).includes(role));
+  return Boolean(session && role && role !== "client");
 }
 
 /** Escape user input before embedding it in a RegExp / Mongo $regex (prevents ReDoS & regex injection). */

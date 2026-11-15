@@ -66,7 +66,7 @@ function toDoc(d: z.infer<typeof locationSchema>) {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requirePermission("locations");
+  const guard = await requirePermission("locations", "create");
   if (!guard.ok) return guard.response;
 
   const parsed = locationSchema.safeParse(await request.json().catch(() => ({})));
@@ -134,7 +134,7 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const guard = await requirePermission("locations");
+  const guard = await requirePermission("locations", "delete");
   if (!guard.ok) return guard.response;
 
   try {

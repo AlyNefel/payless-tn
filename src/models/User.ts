@@ -6,7 +6,8 @@ export interface IUser extends Document {
   name: string;
   email: string;
   password: string;
-  role: "superadmin" | "admin" | "manager" | "staff" | "client";
+  /** RBAC role key: "superadmin" | "admin" | "manager" | "staff" | any custom role key ("client" = customer). */
+  role: string;
   avatar?: string;
   phone?: string;
   isActive: boolean;
@@ -32,11 +33,7 @@ const UserSchema = new Schema<IUser>(
       index: true,
     },
     password: { type: String, required: true, minlength: 6, select: false },
-    role: {
-      type: String,
-      enum: ["superadmin", "admin", "manager", "staff", "client"],
-      default: "staff",
-    },
+    role: { type: String, default: "staff", trim: true, lowercase: true, maxlength: 40, index: true },
     avatar: String,
     phone: String,
     isActive: { type: Boolean, default: true },

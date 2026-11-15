@@ -20,17 +20,18 @@ import {
 } from "@/lib/fleetUnits";
 import { notifyStaff } from "@/lib/notify";
 
-async function checkAdmin(level: "view" | "edit" = "edit") {
+async function checkAdmin(level: string = "edit") {
   const guard = await requirePermission("bookings", level);
-  return guard.ok ? guard.session : null;
+  return guard;
 }
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await checkAdmin("view");
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guard = await checkAdmin("view");
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   const { id } = await params;
   if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -91,8 +92,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await checkAdmin();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guard = await checkAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   const { id } = await params;
   if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -107,6 +109,12 @@ export async function PATCH(
     }
 
     const parsed = updateSchema.safeParse(body);
+
+    // Cancelling / refusing a booking is its own permission ("bookings.cancel").
+    if (parsed.success && (parsed.data.status === "cancelled" || parsed.data.status === "rejected")) {
+      const cancelGuard = await requirePermission("bookings", "cancel");
+      if (!cancelGuard.ok) return cancelGuard.response;
+    }
 
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error.issues[0]?.message || "Validation error" }, { status: 400 });
@@ -348,8 +356,9 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const session = await checkAdmin();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const guard = await checkAdmin("delete");
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   const { id } = await params;
   try {
