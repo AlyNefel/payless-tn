@@ -3,6 +3,7 @@ import { sendEmail } from "@/lib/email";
 import connectDB from "@/lib/db";
 import EmailTemplate from "@/models/EmailTemplate";
 import { requireStaff } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
 const DEFAULT_SAMPLE_DATA: Record<string, string> = {
   customerName: "Mohamed Ben Salem",
@@ -30,7 +31,7 @@ const DEFAULT_SAMPLE_DATA: Record<string, string> = {
 };
 
 export async function POST(request: NextRequest) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("emails", "edit");
   if (!guard.ok) return guard.response;
 
   try {

@@ -3,6 +3,7 @@ import Booking from "@/models/Booking";
 import Vehicle from "@/models/Vehicle";
 import type { BookingStatus } from "@/models/Booking";
 import mongoose from "mongoose";
+import { rentableUnitCount } from "./fleetUnits";
 
 export const ACTIVE_STATUSES: BookingStatus[] = [
   "confirmed",
@@ -30,7 +31,7 @@ export async function getVehicleStockAvailability(
 ): Promise<VehicleStockInfo> {
   await connectDB();
 
-  const vehicle = await Vehicle.findById(vehicleId).select("totalUnits availableUnits status isActive").lean();
+  const vehicle = await Vehicle.findById(vehicleId).select("totalUnits availableUnits status isActive units.status").lean();
   // Only "archived" or inactive vehicles are excluded.
   // Vehicles marked with internal statuses like "rented" or at another garage/location
   // still belong to the centralized fleet pool; availability is strictly determined by booking count vs totalUnits.
@@ -38,7 +39,7 @@ export async function getVehicleStockAvailability(
     return { totalUnits: 0, bookedUnits: 0, availableUnits: 0, isAvailable: false };
   }
 
-  const totalUnits = Math.max(1, vehicle.totalUnits || 3);
+  const totalUnits = rentableUnitCount(vehicle as any);
 
   const query: Record<string, unknown> = {
     vehicleId: new mongoose.Types.ObjectId(vehicleId),
@@ -92,7 +93,7 @@ export async function getFleetStockMap(
     isActive: true,
     status: { $nin: ["archived"] },
   })
-    .select("_id totalUnits")
+    .select("_id totalUnits units.status")
     .lean();
 
   // 2. Aggregate active bookings overlapping requested window
@@ -121,7 +122,7 @@ export async function getFleetStockMap(
 
   vehicles.forEach((v) => {
     const vId = v._id.toString();
-    const totalUnits = Math.max(1, v.totalUnits || 3);
+    const totalUnits = rentableUnitCount(v as any);
     const bookedUnits = bookedMap.get(vId) || 0;
     const availableUnits = Math.max(0, totalUnits - bookedUnits);
 

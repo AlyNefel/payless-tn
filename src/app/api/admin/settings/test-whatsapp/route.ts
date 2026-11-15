@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendWhatsAppMessage, sanitizeWhatsAppNumber, WhatsAppConfig } from "@/lib/whatsapp";
-import { requireManager } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 
-async function checkAdmin(_request?: NextRequest) {
-  const guard = await requireManager();
+async function checkAdmin(request?: NextRequest) {
+  const guard = await requirePermission("settings", request?.method === "GET" ? "view" : "edit");
   return guard.ok ? guard.session : null;
 }
 

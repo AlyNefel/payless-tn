@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import AgencySetting from "@/models/AgencySetting";
-import { requireManager } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -33,8 +33,8 @@ const ALIAS_MAP: Record<string, string[]> = {
   contribution_lf2026: ["contributionLF2026"],
 };
 
-async function checkAdmin(_request?: NextRequest) {
-  const guard = await requireManager();
+async function checkAdmin(request?: NextRequest) {
+  const guard = await requirePermission("settings", request?.method === "GET" ? "view" : "edit");
   return guard.ok ? guard.session : null;
 }
 

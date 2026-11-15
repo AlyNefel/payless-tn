@@ -11,6 +11,14 @@ export interface IExtra extends Document {
   price: number; // per day in minor units
   pricingType: "per_day" | "per_rental" | "per_unit";
   maxQuantity: number;
+  /**
+   * "quantity": classic add-on (+/-). "amount": the customer chooses an amount on a slider
+   * (e.g. prepaid fuel 50 / 100 / 150 DT). Amount bounds are in minor units.
+   */
+  selectionMode?: "quantity" | "amount";
+  amountMin?: number;
+  amountMax?: number;
+  amountStep?: number;
   isActive: boolean;
   order: number;
   createdAt: Date;
@@ -40,6 +48,10 @@ const ExtraSchema = new Schema<IExtra>(
       set: (v: string) => (v === "fixed" ? "per_rental" : v),
     },
     maxQuantity: { type: Number, default: 1 },
+    selectionMode: { type: String, enum: ["quantity", "amount"], default: "quantity" },
+    amountMin: { type: Number, default: 5000 },
+    amountMax: { type: Number, default: 20000 },
+    amountStep: { type: Number, default: 5000 },
     isActive: { type: Boolean, default: true },
     order: { type: Number, default: 0 },
   },

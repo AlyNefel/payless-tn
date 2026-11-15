@@ -17,6 +17,10 @@ interface ExtraDoc {
   maxQuantity: number;
   order: number;
   isActive: boolean;
+  selectionMode?: "quantity" | "amount";
+  amountMin?: number;
+  amountMax?: number;
+  amountStep?: number;
 }
 
 interface FormState {
@@ -30,6 +34,10 @@ interface FormState {
   maxQuantity: number;
   order: number;
   isActive: boolean;
+  selectionMode: "quantity" | "amount";
+  amountMinTnd: number;
+  amountMaxTnd: number;
+  amountStepTnd: number;
 }
 
 const EMPTY_FORM: FormState = {
@@ -42,6 +50,10 @@ const EMPTY_FORM: FormState = {
   maxQuantity: 1,
   order: 0,
   isActive: true,
+  selectionMode: "quantity",
+  amountMinTnd: 50,
+  amountMaxTnd: 200,
+  amountStepTnd: 50,
 };
 
 const PRICING_LABELS: Record<PricingType, string> = {
@@ -100,6 +112,10 @@ export default function AdminOptionsPage() {
       maxQuantity: e.maxQuantity || 1,
       order: e.order || 0,
       isActive: e.isActive,
+      selectionMode: e.selectionMode || "quantity",
+      amountMinTnd: (e.amountMin ?? 5000) / 100,
+      amountMaxTnd: (e.amountMax ?? 20000) / 100,
+      amountStepTnd: (e.amountStep ?? 5000) / 100,
     });
   };
 
@@ -171,22 +187,33 @@ export default function AdminOptionsPage() {
   };
 
   const toggleActive = async (e: ExtraDoc) => {
-    await fetch("/api/admin/extras", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: e._id,
-        name: e.name,
-        description: e.description,
-        icon: e.icon,
-        iconPublicId: e.iconPublicId || "",
-        priceTnd: e.price / 100,
-        pricingType: e.pricingType,
-        maxQuantity: e.maxQuantity || 1,
-        order: e.order || 0,
-        isActive: !e.isActive,
-      }),
-    });
+    // Optimistic: the switch reacts instantly, rolled back if the server refuses.
+    setExtras((list) => list.map((x) => (x._id === e._id ? { ...x, isActive: !e.isActive } : x)));
+    try {
+      const res = await fetch("/api/admin/extras", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: e._id, isActive: !e.isActive }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.success) throw new Error(json.error || "Modification refusée");
+    } catch (err) {
+      setExtras((list) => list.map((x) => (x._id === e._id ? { ...x, isActive: e.isActive } : x)));
+      alert(err instanceof Error ? err.message : "Modification refusée");
+    }
+  };
+
+  const setAllActive = async (isActive: boolean) => {
+    const targets = extras.filter((e) => e.isActive !== isActive);
+    await Promise.all(
+      targets.map((e) =>
+        fetch("/api/admin/extras", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: e._id, isActive }),
+        })
+      )
+    );
     await load();
   };
 
@@ -198,16 +225,30 @@ export default function AdminOptionsPage() {
             Options & Équipements
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Options proposées à l&apos;étape 3 de la réservation (icône, prix, mode de facturation).
+            Options proposées à l&apos;étape 3 de la réservation. L&apos;œil masque / affiche une option sur le site en un clic.
           </p>
         </div>
-        <button
-          onClick={openNew}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/25"
-        >
-          <Plus className="w-4 h-4" />
-          Nouvelle option
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setAllActive(true)}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200"
+          >
+            <Eye className="w-4 h-4" /> Tout afficher
+          </button>
+          <button
+            onClick={() => setAllActive(false)}
+            className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200"
+          >
+            <EyeOff className="w-4 h-4" /> Tout masquer
+          </button>
+          <button
+            onClick={openNew}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/25"
+          >
+            <Plus className="w-4 h-4" />
+            Nouvelle option
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -331,6 +372,38 @@ export default function AdminOptionsPage() {
                   </label>
                 ))}
               </div>
+
+              <label className="space-y-1 block">
+                <span className="font-semibold text-slate-600 dark:text-slate-400">Type de choix pour le client</span>
+                <select className={inputCls} value={form.selectionMode}
+                  onChange={(ev) => setForm({ ...form, selectionMode: ev.target.value as FormState["selectionMode"] })}>
+                  <option value="quantity">Quantité (+ / −) — ex. siège bébé</option>
+                  <option value="amount">Montant au choix (barre progressive) — ex. carburant 50 / 100 / 150 DT</option>
+                </select>
+              </label>
+
+              {form.selectionMode === "amount" && (
+                <div className="grid grid-cols-3 gap-3 p-3 rounded-xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200/60 dark:border-blue-900/40">
+                  <label className="space-y-1">
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">Minimum (TND)</span>
+                    <input type="number" min={1} className={inputCls} value={form.amountMinTnd}
+                      onChange={(ev) => setForm({ ...form, amountMinTnd: Number(ev.target.value) })} />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">Maximum (TND)</span>
+                    <input type="number" min={1} className={inputCls} value={form.amountMaxTnd}
+                      onChange={(ev) => setForm({ ...form, amountMaxTnd: Number(ev.target.value) })} />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="font-semibold text-slate-600 dark:text-slate-400">Palier (TND)</span>
+                    <input type="number" min={1} className={inputCls} value={form.amountStepTnd}
+                      onChange={(ev) => setForm({ ...form, amountStepTnd: Number(ev.target.value) })} />
+                  </label>
+                  <p className="col-span-3 text-[11px] text-slate-500">
+                    Le client choisit {form.amountMinTnd} → {form.amountMaxTnd} TND par paliers de {form.amountStepTnd} TND. Le prix ci-dessous est ignoré.
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <label className="space-y-1 col-span-2 sm:col-span-1">

@@ -4,9 +4,10 @@ import { Customer } from "@/models";
 import { escapeRegex } from "@/lib/apiAuth";
 import mongoose from "mongoose";
 import { requireStaff } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
 export async function GET(request: NextRequest) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("customers", "view");
   if (!guard.ok) return guard.response;
 
   try {
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("customers", "edit");
   if (!guard.ok) return guard.response;
 
   try {

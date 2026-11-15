@@ -47,8 +47,8 @@ export default function NotificationsPage() {
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
   const [loading, setLoading] = useState(false);
 
-  const fetchNotifications = async () => {
-    setLoading(true);
+  const fetchNotifications = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await fetch("/api/admin/notifications?limit=100");
       const json = await res.json();
@@ -64,7 +64,43 @@ export default function NotificationsPage() {
 
   useEffect(() => {
     fetchNotifications();
+    // Keep the page live (the bell polls too; this keeps the full list in sync).
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") fetchNotifications(true);
+    }, 30_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Custom reminder form
+  const [showReminder, setShowReminder] = useState(false);
+  const [reminder, setReminder] = useState({ title: "", message: "", licensePlate: "", scheduledFor: "", severity: "info" });
+  const [savingReminder, setSavingReminder] = useState(false);
+  const [reminderError, setReminderError] = useState("");
+  const createReminder = async () => {
+    setSavingReminder(true);
+    setReminderError("");
+    try {
+      const res = await fetch("/api/admin/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...reminder,
+          scheduledFor: reminder.scheduledFor ? new Date(reminder.scheduledFor).toISOString() : undefined,
+          licensePlate: reminder.licensePlate || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || "Échec");
+      setShowReminder(false);
+      setReminder({ title: "", message: "", licensePlate: "", scheduledFor: "", severity: "info" });
+      fetchNotifications(true);
+    } catch (e) {
+      setReminderError(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setSavingReminder(false);
+    }
+  };
 
   const getTitle = (n: NotificationItem): string => {
     if (typeof n.title === "object" && n.title) {
@@ -195,7 +231,14 @@ export default function NotificationsPage() {
           </div>
 
           <Button
-            onClick={fetchNotifications}
+            onClick={() => setShowReminder(true)}
+            className="bg-blue-600 hover:bg-blue-500 text-white gap-2 text-xs"
+          >
+            <Bell className="h-3.5 w-3.5" />
+            {lang === "fr" ? "Nouveau rappel" : "New reminder"}
+          </Button>
+          <Button
+            onClick={() => fetchNotifications()}
             variant="outline"
             className="border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 gap-2 text-xs"
           >
@@ -222,6 +265,69 @@ export default function NotificationsPage() {
           </Button>
         </div>
       </div>
+
+      {showReminder && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-0 sm:p-4">
+          <div className="w-full sm:max-w-md max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 p-5 space-y-3 text-xs">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+              {lang === "fr" ? "Rappel personnalisé" : "Custom reminder"}
+            </h3>
+            <p className="text-slate-500">
+              {lang === "fr"
+                ? "Ex. « Changer les pneus » pour 245 TU 7890, le 15/12 à 09:00. Toute l'équipe reçoit l'alerte à l'heure prévue."
+                : "E.g. \"Change tyres\" for 245 TU 7890 on 15/12 at 09:00. The whole team is alerted at that time."}
+            </p>
+            {[
+              ["title", lang === "fr" ? "Titre *" : "Title *", "text"],
+              ["licensePlate", lang === "fr" ? "Immatriculation (optionnel)" : "License plate (optional)", "text"],
+              ["scheduledFor", lang === "fr" ? "Date & heure (vide = maintenant)" : "Date & time (empty = now)", "datetime-local"],
+            ].map(([k, label, type]) => (
+              <label key={k} className="block space-y-1">
+                <span className="font-semibold text-slate-600 dark:text-slate-300">{label}</span>
+                <input
+                  type={type}
+                  value={(reminder as Record<string, string>)[k]}
+                  onChange={(e) => setReminder({ ...reminder, [k]: e.target.value })}
+                  className="w-full h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                />
+              </label>
+            ))}
+            <label className="block space-y-1">
+              <span className="font-semibold text-slate-600 dark:text-slate-300">Message</span>
+              <textarea
+                value={reminder.message}
+                onChange={(e) => setReminder({ ...reminder, message: e.target.value })}
+                className="w-full h-20 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="font-semibold text-slate-600 dark:text-slate-300">{lang === "fr" ? "Importance" : "Importance"}</span>
+              <select
+                value={reminder.severity}
+                onChange={(e) => setReminder({ ...reminder, severity: e.target.value })}
+                className="w-full h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+              >
+                <option value="info">Normale</option>
+                <option value="warning">Importante</option>
+                <option value="critical">Urgente</option>
+              </select>
+            </label>
+            {reminderError && <p className="text-red-600 font-semibold">{reminderError}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setShowReminder(false)} className="text-xs">
+                {lang === "fr" ? "Annuler" : "Cancel"}
+              </Button>
+              <Button
+                onClick={createReminder}
+                disabled={savingReminder || reminder.title.trim().length < 2}
+                className="bg-blue-600 hover:bg-blue-500 text-white text-xs"
+              >
+                {lang === "fr" ? "Programmer" : "Schedule"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Search and Filters Bar */}
       <div className="rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 p-4 shadow-sm flex flex-col md:flex-row items-center gap-3">

@@ -38,10 +38,8 @@ export default function AdminLoginPage() {
       if (res?.error) {
         setErrorMessage("Identifiants invalides. Veuillez vérifier l'adresse email et le mot de passe.");
       } else {
-        // Only redirect to same-origin admin paths to avoid open redirects.
-        const params = new URLSearchParams(window.location.search);
-        const cb = params.get("callbackUrl") || "/admin";
-        router.push(cb.startsWith("/admin") ? cb : "/admin");
+        // The dashboard is always the first screen after sign-in.
+        router.push("/admin");
         router.refresh();
       }
     } catch {

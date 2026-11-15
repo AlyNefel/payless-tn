@@ -29,6 +29,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { SelectedOptionsList } from "@/components/booking/SelectedOptionsList";
+import { BookingOperationsPanel, type UnitOption } from "@/components/admin/BookingOperationsPanel";
 
 interface PopulatedBooking {
   _id: string;
@@ -119,6 +120,9 @@ interface PopulatedBooking {
     processedBy?: string;
     processedAt?: string;
   };
+  assignedUnits?: Array<{ vehicleId: string; unitId?: string; licensePlate: string; auto?: boolean }>;
+  pickupMileage?: number;
+  returnMileage?: number;
   auditHistory?: Array<{
     timestamp: string;
     action: string;
@@ -132,6 +136,7 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
 
   const [booking, setBooking] = useState<PopulatedBooking | null>(null);
+  const [unitOptions, setUnitOptions] = useState<Record<string, UnitOption[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -145,14 +150,15 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
   const [modDecisionLoading, setModDecisionLoading] = useState(false);
   const [modDecisionNotes, setModDecisionNotes] = useState("");
 
-  const fetchBooking = async () => {
-    setLoading(true);
+  const fetchBooking = async (silent = false) => {
+    if (!silent) setLoading(true);
     setError("");
     try {
       const res = await fetch(`/api/admin/bookings/${id}`);
       const data = await res.json();
       if (data.booking) {
         setBooking(data.booking);
+        setUnitOptions(data.unitOptions || {});
         setStatus(data.booking.bookingStatus || "pending");
         setPaymentStatus(data.booking.paymentStatus || "unpaid");
         setInternalNotes(data.booking.internalNotes || "");
@@ -412,6 +418,38 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
         </div>
       )}
 
+      <BookingOperationsPanel
+        bookingId={booking._id}
+        bookingReference={booking.bookingReference}
+        bookingStatus={booking.bookingStatus}
+        returnDate={booking.returnDate}
+        returnTime={booking.returnTime}
+        pickupMileage={booking.pickupMileage}
+        models={
+          booking.vehicles && booking.vehicles.length > 0
+            ? booking.vehicles.map((v) => {
+                const obj = typeof v.vehicleId === "object" ? v.vehicleId : null;
+                return {
+                  vehicleId: String(obj?._id || v.vehicleId || ""),
+                  label: `${v.brand || obj?.brand || ""} ${v.model || obj?.model || ""}`.trim(),
+                  baseDailyTND: (((obj as any)?.pricing?.daily ?? v.dailyRate ?? 0) as number) / 100,
+                };
+              })
+            : [
+                {
+                  vehicleId: String(booking.vehicleId?._id || ""),
+                  label: `${booking.vehicleId?.brand || ""} ${booking.vehicleId?.model || ""}`.trim(),
+                  baseDailyTND: (booking.vehicleId?.pricing?.daily ?? booking.pricingBreakdown?.dailyRate ?? 0) / 100,
+                },
+              ]
+        }
+        assignedUnits={booking.assignedUnits || []}
+        unitOptions={unitOptions}
+        customerPhone={booking.customerId?.phone}
+        customerName={booking.customerId?.firstName}
+        onChanged={() => fetchBooking(true)}
+      />
+
       {/* Pending Customer Modification Request Banner */}
       {booking.modificationRequest && booking.modificationRequest.status === "pending" && (
         <div className="p-5 rounded-2xl bg-amber-500/10 border-2 border-amber-500/30 text-amber-950 dark:text-amber-100 space-y-4 animate-in fade-in">
@@ -588,7 +626,10 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
                   const vObj = typeof vItem.vehicleId === "object" ? vItem.vehicleId : null;
                   const vBrand = vItem.brand || vObj?.brand || "Véhicule";
                   const vModel = vItem.model || vObj?.model || "";
-                  const vPlate = vObj?.licensePlate || "À assigner au comptoir";
+                  const vPlate =
+                    (booking.assignedUnits || []).filter((a) => String(a.vehicleId) === String(vObj?._id || ""))[
+                      booking.vehicles!.slice(0, idx).filter((x) => String((typeof x.vehicleId === "object" ? x.vehicleId?._id : x.vehicleId) || "") === String(vObj?._id || "")).length
+                    ]?.licensePlate || "À assigner au comptoir";
                   return (
                     <div
                       key={idx}
@@ -630,7 +671,9 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
                       {booking.vehicleId?.brand} {booking.vehicleId?.model} ({booking.vehicleId?.year || 2024})
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Matricule: <span className="font-mono font-semibold">{booking.vehicleId?.licensePlate || "À assigner au comptoir"}</span>
+                      Matricule: <span className="font-mono font-semibold">{booking.assignedUnits?.[0]
+                        ? booking.assignedUnits[0].licensePlate || "Affecté (immat. à saisir dans la flotte)"
+                        : "À assigner au comptoir"}</span>
                     </p>
                   </div>
                 </div>
@@ -638,7 +681,7 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
                 {/* Reassign Vehicle Dropdown */}
                 <div className="w-full sm:w-auto">
                   <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                    Changer de véhicule :
+                    Changer de modèle :
                   </label>
                   <select
                     value={selectedVehicleId}

@@ -15,8 +15,9 @@ import { CarSpinner } from "@/components/ui/CarSpinner";
 import { useCompanySettings } from "@/contexts/CompanySettingsContext";
 import { DEFAULT_ZONES, matchZone, type ZoneFeeConfig } from "@/lib/locationFees";
 import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate } from "@/lib/seasonalPricing";
-import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected } from "@/lib/extras";
+import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected, snapAmount } from "@/lib/extras";
 import { OptionIcon } from "@/components/ui/OptionIcon";
+import { fullResImageUrl } from "@/lib/cloudinaryUrl";
 
 /** Indicative EUR conversion shown next to the TND total (1 EUR ≈ 3.35 TND). */
 const TND_PER_EUR = 3.35;
@@ -40,6 +41,21 @@ interface ExtraItem {
   icon?: string;
   unit?: string;
   maxQuantity?: number;
+  /** "amount" = the customer chooses an amount on a slider (e.g. prepaid fuel). Minor units. */
+  selectionMode?: "quantity" | "amount";
+  amountMin?: number;
+  amountMax?: number;
+  amountStep?: number;
+}
+
+type CartExtra = { id: string; quantity: number; amount?: number };
+
+/** Line total of a selected option, identical to the server rule. */
+function cartExtraTotal(extra: ExtraItem, ex: CartExtra, rentalDays: number): number {
+  if (extra.selectionMode === "amount") {
+    return snapAmount(ex.amount ?? extra.amountMin ?? 0, extra.amountMin ?? 0, extra.amountMax ?? 0, extra.amountStep ?? 1);
+  }
+  return extraLineTotal(extra.price, ex.quantity, rentalDays, extra.pricingType);
 }
 
 const DEFAULT_LOCATIONS: LocationItem[] = [
@@ -67,7 +83,7 @@ interface BookingData {
   pickupTime: string;
   returnTime: string;
   vehicleId: string;
-  extras: { id: string; quantity: number }[];
+  extras: CartExtra[];
   firstName: string;
   lastName: string;
   email: string;
@@ -96,7 +112,7 @@ interface Vehicle {
 
 interface CartItem {
   vehicle: Vehicle;
-  extras: { id: string; quantity: number }[];
+  extras: CartExtra[];
 }
 
 function getLocalizedName(name: { fr: string; en: string; ar: string } | string | undefined, locale: string): string {
@@ -361,7 +377,7 @@ function BookingContent() {
       const vExtras = item.extras.reduce((exSum, ex) => {
         const extra = availableExtras.find((e) => e._id === ex.id);
         if (!extra) return exSum;
-        return exSum + extraLineTotal(extra.price, ex.quantity, rentalDays, extra.pricingType);
+        return exSum + cartExtraTotal(extra, ex, rentalDays);
       }, 0);
       return sum + vExtras;
     }, 0);
@@ -564,6 +580,7 @@ function BookingContent() {
           extras: c.extras.map((ex) => ({
             extraId: ex.id,
             quantity: ex.quantity,
+            ...(ex.amount !== undefined ? { amount: ex.amount } : {}),
           })),
         })),
         pickupLocationId: data.pickupLocationId || (locations[0]?._id ?? "soukra-agency"),
@@ -576,6 +593,7 @@ function BookingContent() {
           c.extras.map((ex) => ({
             extraId: ex.id,
             quantity: ex.quantity,
+            ...(ex.amount !== undefined ? { amount: ex.amount } : {}),
           }))
         ),
         couponCode: couponStatus?.valid ? data.couponCode.trim().toUpperCase() : undefined,
@@ -1211,9 +1229,9 @@ function BookingContent() {
                             }`}
                           >
                             <img
-                              src={c.vehicle.images?.[0]?.url || "https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=200&q=80"}
+                              src={fullResImageUrl(c.vehicle.images?.[0]?.url) || "https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=200&q=80"}
                               alt={`${c.vehicle.brand} ${c.vehicle.model}`}
-                              className="w-16 h-12 object-cover rounded-lg shrink-0 bg-neutral-100"
+                              className="w-20 h-14 object-contain rounded-lg shrink-0 bg-white border border-neutral-100"
                             />
                             <div className="flex-1 min-w-0">
                               <div className="font-bold text-xs truncate text-foreground">
@@ -1313,11 +1331,13 @@ function BookingContent() {
                                 : "border-border dark:border-neutral-800 hover:border-blue-300 dark:hover:border-neutral-700 bg-white dark:bg-neutral-800/60"
                             }`}
                           >
-                            <div className="relative w-full sm:w-28 h-36 sm:h-20 rounded-lg overflow-hidden shrink-0 bg-neutral-100 dark:bg-neutral-800">
+                            <div className="relative w-full sm:w-36 aspect-[16/10] sm:aspect-auto sm:h-24 rounded-lg overflow-hidden shrink-0 bg-white border border-neutral-100 dark:border-neutral-700">
                               <img
-                                src={img}
+                                src={fullResImageUrl(img)}
                                 alt={`${v.brand} ${v.model}`}
-                                className="w-full h-full object-cover"
+                                loading="lazy"
+                                decoding="async"
+                                className="w-full h-full object-contain p-1.5"
                               />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -1543,7 +1563,7 @@ function BookingContent() {
                     const freeLabel = locale === "ar" ? "مجاناً" : locale === "en" ? "Free" : "Offert";
                     const priceFormatted = isFree ? freeLabel : `${fmt(extra.price)} ${currencySymbol}`;
 
-                    const updateExtras = (nextList: { id: string; quantity: number }[]) => {
+                    const updateExtras = (nextList: CartExtra[]) => {
                       setCart((prev) =>
                         prev.map((item, idx) =>
                           idx === activeVehicleIndex ? { ...item, extras: nextList } : item
@@ -1551,6 +1571,86 @@ function BookingContent() {
                       );
                       setData((d) => ({ ...d, extras: nextList }));
                     };
+
+                    if (extra.selectionMode === "amount") {
+                      const aMin = extra.amountMin ?? 5000;
+                      const aMax = extra.amountMax ?? 20000;
+                      const aStep = extra.amountStep ?? 5000;
+                      const chosen = qty > 0 ? snapAmount(current?.amount ?? aMin, aMin, aMax, aStep) : 0;
+                      const ticks: number[] = [];
+                      for (let v = aMin; v <= aMax && ticks.length < 12; v += aStep) ticks.push(v);
+                      const setAmount = (amount: number | null) => {
+                        const rest = currentVehicleExtras.filter((e) => e.id !== extra._id);
+                        updateExtras(amount === null ? rest : [...rest, { id: extra._id, quantity: 1, amount }]);
+                      };
+                      const noneLabel = locale === "ar" ? "بدون" : locale === "en" ? "None" : "Aucun";
+                      return (
+                        <div
+                          key={extra._id}
+                          className={`md:col-span-2 p-4 rounded-2xl border-2 transition-all ${
+                            qty > 0
+                              ? "border-blue-500 bg-blue-50/70 dark:bg-blue-950/30 shadow-sm"
+                              : "border-border dark:border-neutral-800 bg-white dark:bg-neutral-800/40"
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <OptionIcon icon={extra.icon} size="lg" />
+                            <div className="flex-1 min-w-0">
+                              <div className="font-bold text-sm text-foreground break-words">{getLocalizedName(extra.name, locale)}</div>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {locale === "ar"
+                                  ? "اختر المبلغ المناسب لك"
+                                  : locale === "en"
+                                  ? "Choose the amount that suits you"
+                                  : "Choisissez le montant qui vous convient"}
+                              </p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <div className="text-lg font-black font-mono text-blue-700 dark:text-blue-300">
+                                {qty > 0 ? `${fmt(chosen)} ${currencySymbol}` : noneLabel}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-4 px-1">
+                            <input
+                              type="range"
+                              min={aMin}
+                              max={aMax}
+                              step={aStep}
+                              value={qty > 0 ? chosen : aMin}
+                              onChange={(e) => setAmount(Number(e.target.value))}
+                              className="w-full accent-blue-600 h-2 cursor-pointer"
+                              aria-label={getLocalizedName(extra.name, locale)}
+                            />
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setAmount(null)}
+                              className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors ${
+                                qty === 0 ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 border-transparent" : "border-border hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                              }`}
+                            >
+                              {noneLabel}
+                            </button>
+                            {ticks.map((v) => (
+                              <button
+                                key={v}
+                                type="button"
+                                onClick={() => setAmount(v)}
+                                className={`px-3 py-1.5 rounded-full text-xs font-bold font-mono border transition-colors ${
+                                  qty > 0 && chosen === v
+                                    ? "bg-blue-600 text-white border-blue-600"
+                                    : "border-border hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                                }`}
+                              >
+                                {fmt(v)} {currencySymbol}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    }
 
                     return (
                       <div
@@ -1821,8 +1921,8 @@ function BookingContent() {
                           <div className="w-full sm:w-44 h-36 sm:h-28 rounded-xl bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-100 dark:border-neutral-700/60 p-2 flex items-center justify-center shrink-0">
                             <img
                               src={
-                                cItem.vehicle.images?.find((i) => i.isPrimary)?.url ||
-                                cItem.vehicle.images?.[0]?.url ||
+                                fullResImageUrl(cItem.vehicle.images?.find((i) => i.isPrimary)?.url) ||
+                                fullResImageUrl(cItem.vehicle.images?.[0]?.url) ||
                                 "https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=400&q=80"
                               }
                               alt={`${cItem.vehicle.brand} ${cItem.vehicle.model}`}
@@ -1850,7 +1950,9 @@ function BookingContent() {
                                     >
                                       <OptionIcon icon={item.icon} size="sm" className="!w-5 !h-5 rounded-full" />
                                       {getLocalizedName(item.name, locale)}
-                                      {ex.quantity > 1 && <span className="font-mono">×{ex.quantity}</span>}
+                                      {item.selectionMode === "amount"
+                                        ? <span className="font-mono">{fmt(cartExtraTotal(item, ex, rentalDays))} {currencySymbol}</span>
+                                        : ex.quantity > 1 && <span className="font-mono">×{ex.quantity}</span>}
                                     </span>
                                   );
                                 })}
@@ -1946,9 +2048,11 @@ function BookingContent() {
                             const extra = availableExtras.find((e) => e._id === selected.id);
                             if (!extra) return null;
                             const qty = selected.quantity;
-                            const lineTotal = extraLineTotal(extra.price, qty, rentalDays, extra.pricingType);
+                            const lineTotal = cartExtraTotal(extra, selected, rentalDays);
                             const perDay = isPerDayPricing(extra.pricingType);
-                            const detailStr = perDay
+                            const detailStr = extra.selectionMode === "amount"
+                              ? (locale === "ar" ? "مبلغ مختار" : locale === "en" ? "chosen amount" : "montant choisi")
+                              : perDay
                               ? (locale === "ar" ? `×${qty} × ${rentalDays} يوم`
                                 : locale === "en" ? `×${qty} × ${rentalDays} day${rentalDays > 1 ? "s" : ""}`
                                 : `×${qty} × ${rentalDays} jour${rentalDays > 1 ? "s" : ""}`)
@@ -2003,8 +2107,9 @@ function BookingContent() {
                           })
                         )}
 
-                        {/* Delivery fee — always shown, one-time flat fee (not per day) */}
-                        <tr className={`hover:bg-neutral-50/50 dark:hover:bg-neutral-800/40${deliveryFee === 0 ? " opacity-55" : ""}`}>
+                        {/* Delivery fee — one-time flat fee, hidden when free */}
+                        {deliveryFee > 0 && (
+                        <tr className="hover:bg-neutral-50/50 dark:hover:bg-neutral-800/40">
                           <td className="py-2.5 px-3.5 sm:px-4">
                             <span className="font-semibold">{locale === "ar" ? "معلوم التسليم" : locale === "en" ? "Delivery fee" : "Frais de livraison"} ({selectedPickupLocName || "\u2014"})</span>
                             <div className="text-[11px] text-muted-foreground">{locale === "ar" ? "معلوم ثابت مرة واحدة" : locale === "en" ? "One-time flat fee" : "Forfait unique \u2014 non r\u00e9p\u00e9t\u00e9 par jour"}</div>
@@ -2013,9 +2118,11 @@ function BookingContent() {
                           <td className="py-2.5 px-3.5 sm:px-4 text-right font-bold font-mono">{deliveryFee === 0 ? <span className="text-emerald-600 dark:text-emerald-400">{locale === "ar" ? "مجاناً" : locale === "en" ? "Free" : "Inclus"}</span> : <span>+{fmt(deliveryFee)} {currencySymbol}</span>}</td>
                           <td className="px-2"></td>
                         </tr>
+                        )}
 
-                        {/* Ramassage / Return fee — always shown, one-time flat fee (not per day) */}
-                        <tr className={`hover:bg-neutral-50/50 dark:hover:bg-neutral-800/40${ramassageFee === 0 ? " opacity-55" : ""}`}>
+                        {/* Ramassage / Return fee — one-time flat fee, hidden when free */}
+                        {ramassageFee > 0 && (
+                        <tr className="hover:bg-neutral-50/50 dark:hover:bg-neutral-800/40">
                           <td className="py-2.5 px-3.5 sm:px-4">
                             <span className="font-semibold">{locale === "ar" ? "معلوم الاسترجاع / الرَّمَسة" : locale === "en" ? "Return collection fee" : "Frais de restitution / ramassage"} ({selectedReturnLocName || "\u2014"})</span>
                             <div className="text-[11px] text-muted-foreground">{locale === "ar" ? "معلوم ثابت مرة واحدة" : locale === "en" ? "One-time flat fee" : "Forfait unique \u2014 Rapatriement v\u00e9hicule"}</div>
@@ -2024,6 +2131,7 @@ function BookingContent() {
                           <td className="py-2.5 px-3.5 sm:px-4 text-right font-bold font-mono">{ramassageFee === 0 ? <span className="text-emerald-600 dark:text-emerald-400">{locale === "ar" ? "مجاناً" : locale === "en" ? "Free" : "Inclus"}</span> : <span>+{fmt(ramassageFee)} {currencySymbol}</span>}</td>
                           <td className="px-2"></td>
                         </tr>
+                        )}
 
                         {/* Contribution LF 2026 only if > 0 */}
                         {contributionLF2026 > 0 && (

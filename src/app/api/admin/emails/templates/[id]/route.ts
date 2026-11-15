@@ -3,12 +3,13 @@ import connectDB from "@/lib/db";
 import EmailTemplate from "@/models/EmailTemplate";
 import mongoose from "mongoose";
 import { requireStaff } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("emails", "view");
   if (!guard.ok) return guard.response;
 
   try {
@@ -44,7 +45,7 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("emails", "edit");
   if (!guard.ok) return guard.response;
 
   try {
@@ -101,7 +102,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const guard = await requireStaff();
+  const guard = await requirePermission("emails", "edit");
   if (!guard.ok) return guard.response;
 
   try {

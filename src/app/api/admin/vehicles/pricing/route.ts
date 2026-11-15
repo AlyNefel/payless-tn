@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import Vehicle from "@/models/Vehicle";
-import { requireStaff } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 
-async function checkAdmin() {
-  const guard = await requireStaff();
+async function checkAdmin(level: "view" | "edit" = "edit") {
+  const guard = await requirePermission("pricing", level);
   return guard.ok ? guard.session : null;
 }
 
 export async function GET(request: NextRequest) {
-  const session = await checkAdmin();
+  const session = await checkAdmin("view");
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

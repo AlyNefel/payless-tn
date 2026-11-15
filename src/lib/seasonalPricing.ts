@@ -1,3 +1,5 @@
+import { computeRentalDays } from "./extras";
+
 export interface SeasonalPriceRule {
   name?: string;
   startDate?: string;
@@ -74,7 +76,13 @@ export function getVehicleEffectiveDailyRate(vehicle: any, dateOrStr?: Date | st
 }
 
 /**
- * Computes the total rental subtotal across all days, accounting for seasonal prices per day
+ * Computes the total rental subtotal.
+ *
+ * Price guarantee: the daily rate in force on the PICKUP day is locked for the
+ * whole rental. A rental that starts in one pricing period and ends in another
+ * (e.g. starts in low season, ends in high season) keeps the first period's
+ * price for every day, so the customer is never charged a different rate than
+ * the one shown when they booked.
  */
 export function calculateSeasonalRentalTotal(
   vehicle: any,
@@ -86,20 +94,10 @@ export function calculateSeasonalRentalTotal(
   }
 
   const start = new Date(pickupDate);
-  const end = new Date(returnDate);
-  const diffMs = end.getTime() - start.getTime();
-  const days = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+  const days = computeRentalDays(pickupDate, returnDate);
 
-  let subtotal = 0;
-  const curr = new Date(start);
+  const lockedDailyRate = getVehicleEffectiveDailyRate(vehicle, start);
+  const subtotal = lockedDailyRate * days;
 
-  for (let i = 0; i < days; i++) {
-    const dailyRate = getVehicleEffectiveDailyRate(vehicle, curr);
-    subtotal += dailyRate;
-    curr.setDate(curr.getDate() + 1);
-  }
-
-  const averageDailyRate = Math.round(subtotal / days);
-  return { subtotal, averageDailyRate, days };
+  return { subtotal, averageDailyRate: lockedDailyRate, days };
 }
-

@@ -38,6 +38,8 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { AdminLangProvider, useAdminLang } from "@/contexts/AdminLangContext";
+import { ROLE_LABELS, sectionForPath, type AccessLevel } from "@/lib/permissionsShared";
+import { NotificationToasts, severityColor, severityIcon, timeAgo, useLiveNotifications } from "./useLiveNotifications";
 
 interface NavItem {
   title: string;
@@ -111,6 +113,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: Settings,
     items: [
       { title: "Paramètres Agence", href: "/admin/settings", icon: Settings },
+      { title: "Utilisateurs & rôles", href: "/admin/users", icon: ShieldCheck },
     ],
   },
   {
@@ -134,65 +137,6 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-const MANAGERS_MENU = [
-  { label: "Car Model Manager", href: "/admin/fleet" },
-  { label: "Tarifs par Période", href: "/admin/pricing" },
-  { label: "Garage & Vidanges", href: "/admin/garage" },
-  { label: "Car Model Prices", href: "/admin/fleet" },
-  { label: "Customer Manager", href: "/admin/customers" },
-  { label: "Notification Manager", href: "/admin/notifications" },
-  { label: "Extras Manager", href: "/admin/options" },
-  { label: "Location Manager", href: "/admin/locations" },
-  { label: "Additional Fee Manager", href: "/admin/fees" },
-  { label: "Tax Manager", href: "/admin/fees" },
-  { label: "Payment Manager", href: "/admin/finance" },
-  { label: "Reservation Manager", href: "/admin/bookings" },
-  { label: "Étapes de Réservation", href: "/admin/steps" },
-];
-
-interface NotificationItem {
-  id: string;
-  title: string;
-  message: string;
-  time: string;
-  type: "booking" | "maintenance" | "payment";
-  unread: boolean;
-}
-
-const SAMPLE_NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: "notif-1",
-    title: "Nouvelle réservation en attente",
-    message: "Sami Ben Salem a réservé Clio 6 pour 4 jours",
-    time: "Il y a 10 min",
-    type: "booking",
-    unread: true,
-  },
-  {
-    id: "notif-2",
-    title: "Paiement en ligne validé",
-    message: "420 TND reçus pour la réservation #PAY-TN-2026-104",
-    time: "Il y a 1 heure",
-    type: "payment",
-    unread: true,
-  },
-  {
-    id: "notif-3",
-    title: "Entretien programmé",
-    message: "Kia Sportage requiert révision des 20 000 km",
-    time: "Il y a 3 heures",
-    type: "maintenance",
-    unread: true,
-  },
-  {
-    id: "notif-4",
-    title: "Retour véhicule effectué",
-    message: "Youssef Gharbi a retourné la Seat Arona à Tunis-Carthage",
-    time: "Hier à 18:00",
-    type: "booking",
-    unread: false,
-  },
-];
 
 function AdminLayoutContent({
   children,
@@ -204,7 +148,33 @@ function AdminLayoutContent({
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState(SAMPLE_NOTIFICATIONS);
+  const live = useLiveNotifications(pathname !== "/admin/login", lang === "en" ? "en" : "fr");
+
+  // Role-based access: which sections the signed-in user may see / edit.
+  const [access, setAccess] = useState<Record<string, AccessLevel> | null>(null);
+  const [me, setMe] = useState<{ name?: string; email?: string; role?: string } | null>(null);
+  useEffect(() => {
+    if (pathname === "/admin/login") return;
+    fetch("/api/admin/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.success) {
+          setAccess(d.access);
+          setMe(d.user);
+        }
+      })
+      .catch(() => {});
+  }, [pathname === "/admin/login"]);
+  const canSee = (href: string) => {
+    if (!access) return true; // until loaded: APIs still enforce permissions server-side
+    const key = sectionForPath(href);
+    return !key || (access[key] && access[key] !== "none");
+  };
+  const visibleGroups = NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => canSee(i.href)) })).filter(
+    (g) => g.items.length > 0
+  );
+  const currentSection = sectionForPath(pathname);
+  const currentAccess: AccessLevel = access && currentSection ? access[currentSection] || "none" : "edit";
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showQuickBookingModal, setShowQuickBookingModal] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -241,6 +211,12 @@ function AdminLayoutContent({
     };
   });
   const [isSubmittingQuick, setIsSubmittingQuick] = useState(false);
+  const [quickResult, setQuickResult] = useState<null | {
+    reference: string;
+    bookingId?: string;
+    plates?: string;
+    whatsappUrl?: string;
+  }>(null);
   const [quickError, setQuickError] = useState("");
 
   useEffect(() => {
@@ -258,7 +234,7 @@ function AdminLayoutContent({
       })
       .catch(() => {});
 
-    fetch("/api/vehicles?limit=50")
+    fetch("/api/vehicles?limit=100")
       .then((r) => r.json())
       .then((res) => {
         if (res.success && Array.isArray(res.vehicles) && res.vehicles.length > 0) {
@@ -286,6 +262,11 @@ function AdminLayoutContent({
       const selectedPickup = adminLocations.find((l) => l._id === quickForm.pickupLocationId) || adminLocations[0];
       const selectedReturn = adminLocations.find((l) => l._id === quickForm.returnLocationId) || selectedPickup;
 
+      if (!selectedPickup?._id) {
+        setQuickError("Aucune agence active : créez d'abord une agence dans « Agences ».");
+        setIsSubmittingQuick(false);
+        return;
+      }
       if (!selectedVeh) {
         setQuickError("Veuillez sélectionner un véhicule.");
         setIsSubmittingQuick(false);
@@ -294,8 +275,8 @@ function AdminLayoutContent({
 
       const payload = {
         vehicleId: selectedVeh._id,
-        pickupLocationId: selectedPickup?._id || "tun-airport",
-        returnLocationId: selectedReturn?._id || selectedPickup?._id || "tun-airport",
+        pickupLocationId: selectedPickup?._id,
+        returnLocationId: selectedReturn?._id || selectedPickup?._id,
         pickupDate: quickForm.pickupDate,
         returnDate: quickForm.returnDate,
         customer: {
@@ -319,8 +300,13 @@ function AdminLayoutContent({
 
       const data = await res.json();
       if (data.success) {
-        setShowQuickBookingModal(false);
-        router.push("/admin/bookings");
+        setQuickResult({
+          reference: data.bookingReference,
+          bookingId: data.bookingId,
+          plates: data.assignedPlates,
+          whatsappUrl: data.whatsappUrl,
+        });
+        setQuickForm((f) => ({ ...f, customerName: "", phone: "", email: "" }));
       } else {
         setQuickError(data.error || "Erreur lors de la création de la réservation.");
       }
@@ -348,30 +334,9 @@ function AdminLayoutContent({
     if (href === "/admin/notifications") return lang === "fr" ? "Notifications" : "Notifications";
     if (href === "/admin/emails") return lang === "fr" ? "Journal Emails" : "Email Logs";
     if (href === "/admin/settings") return lang === "fr" ? "Paramètres" : "Settings";
+    if (href === "/admin/users") return lang === "fr" ? "Utilisateurs & rôles" : "Users & roles";
     return fallback;
   };
-
-  // Fetch real notifications from database
-  useEffect(() => {
-    // The login page renders inside this shell: no authenticated calls before sign-in.
-    if (pathname === "/admin/login") return;
-    fetch("/api/admin/notifications?limit=8")
-      .then((res) => (res.ok ? res.json() : { notifications: [] }))
-      .then((data) => {
-        if (data.notifications && data.notifications.length > 0) {
-          setNotifications(
-            data.notifications.map((n: any) => ({
-              id: n._id,
-              title: typeof n.title === "object" ? n.title[lang] || n.title.fr || n.title.en : n.title,
-              message: typeof n.message === "object" ? n.message[lang] || n.message.fr || n.message.en : n.message,
-              time: new Date(n.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              unread: !n.isRead,
-            }))
-          );
-        }
-      })
-      .catch(() => {});
-  }, [lang, pathname]);
 
   // Load and apply theme
   useEffect(() => {
@@ -410,11 +375,8 @@ function AdminLayoutContent({
     return <>{children}</>;
   }
 
-  const unreadCount = notifications.filter((n) => n.unread).length;
-
-  const markAllAsRead = () => {
-    setNotifications(notifications.map((n) => ({ ...n, unread: false })));
-  };
+  const unreadCount = live.unreadCount;
+  const markAllAsRead = () => live.markAllRead();
 
   const handleSignOut = async () => {
     document.cookie =
@@ -451,7 +413,7 @@ function AdminLayoutContent({
 
         {/* Navigation Groups with Collapsible Submenus */}
         <div className="flex-1 overflow-y-auto px-3.5 py-4 space-y-2">
-          {NAV_GROUPS.map((group) => {
+          {visibleGroups.map((group) => {
             const GroupIcon = group.icon;
             const title = lang === "en" ? group.groupTitle.en : group.groupTitle.fr;
             const isCollapsed = Boolean(collapsedGroups[group.id]);
@@ -543,14 +505,14 @@ function AdminLayoutContent({
           <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-blue-600/20">
-                A
+                {(me?.name || "A").charAt(0).toUpperCase()}
               </div>
               <div className="overflow-hidden">
                 <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                  Admin Principal
+                  {me?.name || "…"}
                 </p>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                  admin@paylesscarrental.com
+                  {me?.role ? ROLE_LABELS[me.role] || me.role : ""}{me?.email ? ` · ${me.email}` : ""}
                 </p>
               </div>
             </div>
@@ -591,7 +553,7 @@ function AdminLayoutContent({
             </div>
 
             <div className="flex-1 overflow-y-auto py-3 space-y-2">
-              {NAV_GROUPS.map((group) => {
+              {visibleGroups.map((group) => {
                 const GroupIcon = group.icon;
                 const title = lang === "en" ? group.groupTitle.en : group.groupTitle.fr;
                 const isCollapsed = Boolean(collapsedGroups[group.id]);
@@ -748,14 +710,17 @@ function AdminLayoutContent({
             {/* Notifications Bell with Popover */}
             <div className="relative">
               <button
-                onClick={() => setNotificationsOpen(!notificationsOpen)}
+                onClick={() => {
+                  setNotificationsOpen(!notificationsOpen);
+                  live.requestDesktopPermission();
+                }}
                 className="relative p-2 sm:p-2.5 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors shadow-sm"
                 title="Notifications"
               >
                 <Bell className="w-4 h-4" />
                 {unreadCount > 0 && (
                   <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white shadow-md shadow-red-500/50">
-                    {unreadCount}
+                    {unreadCount > 99 ? "99+" : unreadCount}
                   </span>
                 )}
               </button>
@@ -780,28 +745,44 @@ function AdminLayoutContent({
                   </div>
 
                   <div className="divide-y divide-slate-100 dark:divide-slate-800/80 max-h-80 overflow-y-auto py-1">
-                    {notifications.map((n) => (
-                      <div
-                        key={n.id}
-                        className={`py-3 px-2 rounded-xl transition-colors ${
-                          n.unread
-                            ? "bg-blue-50/50 dark:bg-blue-900/10"
-                            : "hover:bg-slate-50 dark:hover:bg-slate-850/50"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <p className="text-xs font-bold text-slate-900 dark:text-white">
-                            {n.title}
-                          </p>
-                          <span className="text-[10px] text-slate-400 whitespace-nowrap">
-                            {n.time}
-                          </span>
+                    {live.items.length === 0 && (
+                      <p className="py-6 text-center text-xs text-slate-500">Aucune notification pour le moment.</p>
+                    )}
+                    {live.items.map((n) => {
+                      const Icon = severityIcon(n);
+                      const body = (
+                        <div className="flex items-start gap-2.5">
+                          <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${severityColor[n.severity]}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-xs font-bold text-slate-900 dark:text-white">{n.title}</p>
+                              <span className="text-[10px] text-slate-400 whitespace-nowrap">{timeAgo(n.createdAt, lang === "en" ? "en" : "fr")}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">{n.message}</p>
+                          </div>
                         </div>
-                        <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
-                          {n.message}
-                        </p>
-                      </div>
-                    ))}
+                      );
+                      const cls = `block py-3 px-2 rounded-xl transition-colors ${
+                        n.unread ? "bg-blue-50/50 dark:bg-blue-900/10" : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                      }`;
+                      return n.link ? (
+                        <Link
+                          key={n.id}
+                          href={n.link}
+                          className={cls}
+                          onClick={() => {
+                            live.markRead(n.id);
+                            setNotificationsOpen(false);
+                          }}
+                        >
+                          {body}
+                        </Link>
+                      ) : (
+                        <button key={n.id} type="button" className={`${cls} w-full text-left`} onClick={() => live.markRead(n.id)}>
+                          {body}
+                        </button>
+                      );
+                    })}
                   </div>
 
                   <div className="pt-2 border-t border-slate-200 dark:border-slate-800 text-center">
@@ -833,14 +814,37 @@ function AdminLayoutContent({
 
         {/* PAGE CONTENT CONTAINER */}
         <main className="flex-1 p-4 md:p-8 overflow-y-auto transition-colors duration-300">
-          {children}
+          {currentAccess === "none" ? (
+            <div className="max-w-xl mx-auto mt-16 p-8 rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <ShieldCheck className="w-10 h-10 mx-auto text-slate-400" />
+              <h1 className="text-lg font-bold text-slate-900 dark:text-white">Accès limité</h1>
+              <p className="text-xs text-slate-500">
+                Votre rôle ne donne pas accès à cette section. Contactez le super administrateur pour obtenir les droits.
+              </p>
+              <Link href="/admin" className="inline-block px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold">
+                Retour au tableau de bord
+              </Link>
+            </div>
+          ) : (
+            <>
+              {currentAccess === "view" && (
+                <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs font-semibold flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 shrink-0" />
+                  Accès en lecture seule : les modifications de cette section sont réservées aux rôles autorisés.
+                </div>
+              )}
+              {children}
+            </>
+          )}
         </main>
       </div>
 
       {/* QUICK NEW BOOKING MODAL */}
+      <NotificationToasts toasts={live.toasts} onDismiss={live.dismissToast} onOpen={(n) => live.markRead(n.id)} />
+
       {showQuickBookingModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl p-6 text-slate-900 dark:text-slate-100">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full sm:max-w-lg max-h-[94vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl p-6 text-slate-900 dark:text-slate-100">
             <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 flex items-center justify-center">
@@ -856,19 +860,71 @@ function AdminLayoutContent({
                 </div>
               </div>
               <button
-                onClick={() => setShowQuickBookingModal(false)}
+                onClick={() => {
+                  setShowQuickBookingModal(false);
+                  setQuickResult(null);
+                }}
                 className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {quickError && (
+            {quickResult && (
+              <div className="mt-4 space-y-4 text-xs">
+                <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200">
+                  <p className="font-bold text-sm flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4" /> Réservation {quickResult.reference} créée
+                  </p>
+                  <p className="mt-1">
+                    {quickResult.plates
+                      ? `Véhicule affecté automatiquement : ${quickResult.plates}`
+                      : "Aucun véhicule libre n'a pu être affecté automatiquement — choisissez-le dans la réservation."}
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {quickResult.whatsappUrl && (
+                    <a
+                      href={quickResult.whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+                    >
+                      Envoyer la confirmation WhatsApp
+                    </a>
+                  )}
+                  {quickResult.bookingId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = quickResult.bookingId;
+                        setShowQuickBookingModal(false);
+                        setQuickResult(null);
+                        router.push(`/admin/bookings/${id}`);
+                      }}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold"
+                    >
+                      Ouvrir la réservation
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setQuickResult(null)}
+                  className="w-full px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold"
+                >
+                  Créer une autre réservation
+                </button>
+              </div>
+            )}
+
+            {!quickResult && quickError && (
               <div className="mt-3 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-xs text-red-600 dark:text-red-400 font-medium">
                 {quickError}
               </div>
             )}
 
+            {!quickResult && (
             <form
               onSubmit={handleQuickBookingSubmit}
               className="mt-4 space-y-3.5 text-xs"
@@ -884,6 +940,19 @@ function AdminLayoutContent({
                   onChange={(e) => setQuickForm({ ...quickForm, customerName: e.target.value })}
                   placeholder="Ex: Mohamed Ben Salem"
                   className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2.5 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">
+                  Email (optionnel — pour recevoir le bon PDF)
+                </label>
+                <input
+                  type="email"
+                  value={quickForm.email}
+                  onChange={(e) => setQuickForm({ ...quickForm, email: e.target.value })}
+                  placeholder="client@email.com"
+                  className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3.5 py-2.5 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
 
@@ -904,7 +973,7 @@ function AdminLayoutContent({
 
                 <div>
                   <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">
-                    Véhicule Assigné *
+                    Modèle * (immatriculation affectée automatiquement)
                   </label>
                   <select
                     required
@@ -917,7 +986,7 @@ function AdminLayoutContent({
                     ) : (
                       adminVehicles.map((v) => (
                         <option key={v._id} value={v._id}>
-                          {v.brand} {v.model} ({v.licensePlate || "Disponible"}) - {Math.round((v.pricing?.daily || 7000) / 100)} TND/j
+                          {v.brand} {v.model} — {Math.round((v.pricing?.daily || 0) / 100)} TND/j{v.availableUnits !== undefined ? ` · ${v.availableUnits} dispo.` : ""}
                         </option>
                       ))
                     )}
@@ -936,13 +1005,7 @@ function AdminLayoutContent({
                     className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3 py-2.5 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
                   >
                     {adminLocations.length === 0 ? (
-                      <>
-                        <option value="tun-airport">1. Aéroport de Tunis-Carthage (TUN)</option>
-                        <option value="mir-airport">2. Aéroport de Monastir (MIR)</option>
-                        <option value="soukra-agency">3. Agence La Soukra (Siège)</option>
-                        <option value="hammamet-city">4. Hammamet Ville & Yasmine</option>
-                        <option value="sousse-city">5. Sousse & Port El Kantaoui</option>
-                      </>
+                      <option value="">Aucune agence active</option>
                     ) : (
                       adminLocations.map((loc) => {
                         const name = typeof loc.name === "object" ? loc.name[lang] || loc.name.fr || loc.name.en : loc.name;
@@ -966,13 +1029,7 @@ function AdminLayoutContent({
                     className="w-full rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 px-3 py-2.5 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
                   >
                     {adminLocations.length === 0 ? (
-                      <>
-                        <option value="tun-airport">1. Aéroport de Tunis-Carthage (TUN)</option>
-                        <option value="mir-airport">2. Aéroport de Monastir (MIR)</option>
-                        <option value="soukra-agency">3. Agence La Soukra (Siège)</option>
-                        <option value="hammamet-city">4. Hammamet Ville & Yasmine</option>
-                        <option value="sousse-city">5. Sousse & Port El Kantaoui</option>
-                      </>
+                      <option value="">Aucune agence active</option>
                     ) : (
                       adminLocations.map((loc) => {
                         const name = typeof loc.name === "object" ? loc.name[lang] || loc.name.fr || loc.name.en : loc.name;
@@ -1032,6 +1089,7 @@ function AdminLayoutContent({
                 </button>
               </div>
             </form>
+            )}
           </div>
         </div>
       )}

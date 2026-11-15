@@ -353,13 +353,13 @@ function VehiclesContent() {
                   >
                     <div>
                       {/* Image Thumbnail */}
-                      <div className="relative h-52 overflow-hidden bg-gray-100 dark:bg-neutral-900">
+                      <div className="relative aspect-[16/11] overflow-hidden bg-white">
                         <VehicleImage
                           src={primaryImg}
                           alt={`${v.brand} ${v.model}`}
                           fill
                           sizes="(min-width: 1280px) 25vw, (min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
-                          className="object-cover group-hover:scale-105 transition-transform duration-500"
+                          className="object-contain p-3 group-hover:scale-105 transition-transform duration-500"
                         />
                         {/* Status badge */}
                         <div className="absolute top-3 left-3 flex items-center gap-1.5">

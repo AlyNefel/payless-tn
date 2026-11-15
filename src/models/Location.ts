@@ -3,6 +3,8 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 export interface ILocation extends Document {
   _id: mongoose.Types.ObjectId;
   name: { fr: string; en: string; ar: string };
+  /** Short agency code shown in the back-office (e.g. "TUN", "MIR"). */
+  code?: string;
   address: string;
   city: string;
   country: string;
@@ -35,6 +37,7 @@ const LocationSchema = new Schema<ILocation>(
       en: { type: String, required: true },
       ar: { type: String, required: true },
     },
+    code: { type: String, default: "", trim: true, uppercase: true, maxlength: 8 },
     address: { type: String, required: true },
     city: { type: String, required: true },
     country: { type: String, required: true },

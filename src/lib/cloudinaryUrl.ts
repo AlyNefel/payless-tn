@@ -19,7 +19,7 @@ export interface CloudinaryTransform {
 
 /** Inserts f_auto,q_auto (+ optional sizing) right after /image/upload/. */
 export function cloudinaryUrl(url: string, t: CloudinaryTransform = {}): string {
-  if (!isCloudinaryUrl(url)) return url;
+  if (!isCloudinaryUrl(url)) return fullResImageUrl(url);
   const parts = ["f_auto", `q_${t.quality ?? "auto"}`];
   if (t.width) parts.push(`w_${Math.round(t.width)}`);
   if (t.height) parts.push(`h_${Math.round(t.height)}`);
@@ -47,4 +47,16 @@ export function cloudinarySrcSet(
 /** next/image loader for Cloudinary URLs (falls back to the original URL otherwise). */
 export function cloudinaryLoader({ src, width, quality }: { src: string; width: number; quality?: number }): string {
   return cloudinaryUrl(src, { width, quality: quality ?? "auto", crop: "limit" });
+}
+
+/**
+ * Legacy gallery images (hmlrentcar.tn) were imported as WordPress thumbnails
+ * ("big_thumb_…" = 225×360, "thumb_…" even smaller). The full-resolution original
+ * lives at the same path without the prefix (≈ 884×1320). Upscaling the thumbnail
+ * into a full-width mobile card is what made vehicle photos look blurry.
+ */
+export function fullResImageUrl(url?: string | null): string {
+  if (!url) return "";
+  if (!url.includes("hmlrentcar.tn")) return url;
+  return url.replace(/\/(big_thumb_|thumb_|small_thumb_)([^/]+)$/i, "/$2");
 }

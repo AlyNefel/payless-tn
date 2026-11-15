@@ -14,6 +14,26 @@ export interface ISeasonalPrice {
   discountPercent?: number; // optional discount applied during this period
 }
 
+export type UnitStatus = "active" | "maintenance" | "out_of_service";
+
+/** One physical car (one license plate) of a car model. */
+export interface IVehicleUnit {
+  _id: mongoose.Types.ObjectId;
+  licensePlate: string;
+  status: UnitStatus;
+  mileage: number;
+  lastVidangeMileage: number;
+  vidangeInterval: number;
+  nextVidangeMileage: number;
+  lastVidangeDate?: Date;
+  technicalInspectionDate?: Date;
+  insuranceExpiryDate?: Date;
+  nextMaintenanceDate?: Date;
+  location?: mongoose.Types.ObjectId;
+  color?: string;
+  notes?: string;
+}
+
 export interface IVehicle {
   _id: mongoose.Types.ObjectId;
   brand: string;
@@ -61,6 +81,8 @@ export interface IVehicle {
     expiryDate: Date;
   };
   location?: mongoose.Types.ObjectId;
+  /** Physical cars of this model. When empty, the model is treated as `totalUnits` anonymous cars (legacy). */
+  units?: IVehicleUnit[];
   totalUnits?: number;
   availableUnits?: number;
   isActive: boolean;
@@ -140,6 +162,23 @@ const VehicleSchema = new Schema<IVehicle>(
       expiryDate: Date,
     },
     location: { type: Schema.Types.ObjectId, ref: "Location" },
+    units: [
+      {
+        licensePlate: { type: String, default: "", trim: true, uppercase: true },
+        status: { type: String, enum: ["active", "maintenance", "out_of_service"], default: "active" },
+        mileage: { type: Number, default: 0 },
+        lastVidangeMileage: { type: Number, default: 0 },
+        vidangeInterval: { type: Number, default: 10000 },
+        nextVidangeMileage: { type: Number, default: 10000 },
+        lastVidangeDate: Date,
+        technicalInspectionDate: Date,
+        insuranceExpiryDate: Date,
+        nextMaintenanceDate: Date,
+        location: { type: Schema.Types.ObjectId, ref: "Location" },
+        color: { type: String, default: "" },
+        notes: { type: String, default: "" },
+      },
+    ],
     totalUnits: { type: Number, default: 3 },
     availableUnits: { type: Number, default: 3 },
     isActive: { type: Boolean, default: true },

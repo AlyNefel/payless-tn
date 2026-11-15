@@ -5,6 +5,7 @@ import { getVehicleStockAvailability } from "@/lib/availability";
 import { sanitizeVehicleForClient } from "@/lib/sanitize";
 import { isStaffRequest } from "@/lib/apiAuth";
 import mongoose from "mongoose";
+import { effectiveMinDays, getGlobalMinRentalDays } from "@/lib/rentalRules";
 
 export const dynamic = "force-dynamic";
 
@@ -54,8 +55,11 @@ export async function GET(
     // Check admin status
     const isAdmin = staff;
 
+    const minDays = effectiveMinDays(vehicle as any, await getGlobalMinRentalDays());
     const enrichedVehicle = {
       ...vehicle,
+      minRentalDays: minDays,
+      pricing: { ...((vehicle as any).pricing || {}), minRentalDays: minDays },
       totalUnits: stockInfo.totalUnits,
       availableUnits: stockInfo.availableUnits,
       bookedUnits: stockInfo.bookedUnits,
