@@ -307,10 +307,10 @@ export function BookingSearchBox() {
                       setReturnLocation(e.target.value);
                     }
                   }}
-                  className="w-full min-w-0 bg-background dark:bg-neutral-800 border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-3.5 pr-10 rtl:pr-3.5 rtl:pl-10 h-11 text-xs sm:text-sm text-foreground appearance-none cursor-pointer outline-none transition-colors truncate"
+                  className="w-full min-w-0 bg-background dark:bg-neutral-800 dark:text-white border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-3.5 pr-10 rtl:pr-3.5 rtl:pl-10 h-11 text-xs sm:text-sm text-foreground appearance-none cursor-pointer outline-none transition-colors truncate"
                 >
                   {TUNISIA_LOCATIONS.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
+                    <option key={loc.id} value={loc.id} className="dark:bg-neutral-800 dark:text-white">
                       {loc.name[locale as "fr" | "en" | "ar"] || loc.name.fr}
                     </option>
                   ))}
@@ -340,10 +340,10 @@ export function BookingSearchBox() {
                     aria-label={t("returnLocation") || "Return Location"}
                     value={returnLocation}
                     onChange={(e) => setReturnLocation(e.target.value)}
-                    className="w-full min-w-0 bg-background dark:bg-neutral-800 border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-3.5 pr-10 rtl:pr-3.5 rtl:pl-10 h-11 text-xs sm:text-sm text-foreground appearance-none cursor-pointer outline-none transition-colors truncate"
+                    className="w-full min-w-0 bg-background dark:bg-neutral-800 dark:text-white border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-3.5 pr-10 rtl:pr-3.5 rtl:pl-10 h-11 text-xs sm:text-sm text-foreground appearance-none cursor-pointer outline-none transition-colors truncate"
                   >
                     {TUNISIA_LOCATIONS.map((loc) => (
-                      <option key={loc.id} value={loc.id}>
+                      <option key={loc.id} value={loc.id} className="dark:bg-neutral-800 dark:text-white">
                         {loc.name[locale as "fr" | "en" | "ar"] || loc.name.fr}
                       </option>
                     ))}
@@ -409,10 +409,10 @@ export function BookingSearchBox() {
                   aria-label={locale === "ar" ? "ساعة الاستلام" : locale === "en" ? "Pick-up time" : "Heure de prise en charge"}
                   value={pickupTime}
                   onChange={(e) => setPickupTime(e.target.value)}
-                  className="col-span-2 w-full min-w-0 bg-background dark:bg-neutral-800 border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-2 h-11 text-xs sm:text-sm text-foreground outline-none transition-colors"
+                  className="col-span-2 w-full min-w-0 bg-background dark:bg-neutral-800 dark:text-white border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-2 h-11 text-xs sm:text-sm text-foreground outline-none transition-colors"
                 >
                   {timeOptions.map((time) => (
-                    <option key={time} value={time}>
+                    <option key={time} value={time} className="dark:bg-neutral-800 dark:text-white">
                       {time}
                     </option>
                   ))}
@@ -446,10 +446,10 @@ export function BookingSearchBox() {
                   aria-label={locale === "ar" ? "ساعة الإرجاع" : locale === "en" ? "Return time" : "Heure de restitution"}
                   value={returnTime}
                   onChange={(e) => setReturnTime(e.target.value)}
-                  className="col-span-2 w-full min-w-0 bg-background dark:bg-neutral-800 border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-2 h-11 text-xs sm:text-sm text-foreground outline-none transition-colors"
+                  className="col-span-2 w-full min-w-0 bg-background dark:bg-neutral-800 dark:text-white border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-2 h-11 text-xs sm:text-sm text-foreground outline-none transition-colors"
                 >
                   {timeOptions.map((time) => (
-                    <option key={time} value={time}>
+                    <option key={time} value={time} className="dark:bg-neutral-800 dark:text-white">
                       {time}
                     </option>
                   ))}

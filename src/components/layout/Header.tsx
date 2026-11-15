@@ -210,10 +210,10 @@ export function Header() {
       <header
         className={cn(
           "sticky top-0 z-40 w-full transition-all duration-300",
-          "backdrop-blur-md bg-white/85 dark:bg-[#07090e]/85 border-b border-border/40",
+          "backdrop-blur-md bg-white/85 dark:bg-black/90 border-b border-border/40 dark:border-neutral-800",
           isScrolled
-            ? "shadow-md bg-white/95 dark:bg-[#07090e]/95 border-border/70"
-            : "bg-white/85 dark:bg-[#07090e]/85"
+            ? "shadow-md bg-white/95 dark:bg-black/95 border-border/70 dark:border-neutral-800"
+            : "bg-white/85 dark:bg-black/90"
         )}
       >
         <div className="mx-auto flex h-16 sm:h-20 lg:h-22 max-w-7xl items-center justify-between px-3.5 sm:px-6 lg:px-8">
@@ -443,11 +443,11 @@ export function Header() {
         createPortal(
           <div
             id="mobile-drawer-portal"
-            className="fixed inset-0 z-[999999] flex flex-col bg-white dark:bg-[#07090e] text-slate-900 dark:text-slate-100 animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
+            className="fixed inset-0 z-[999999] flex flex-col bg-white dark:bg-black text-slate-900 dark:text-slate-100 animate-in fade-in zoom-in-95 duration-200 overflow-hidden"
             style={{ width: "100vw", height: "100vh" }}
           >
             {/* Top Bar inside Drawer */}
-            <div className="flex h-16 sm:h-20 items-center justify-between px-4 sm:px-6 border-b border-slate-200 dark:border-neutral-800 bg-white/95 dark:bg-[#07090e]/95 backdrop-blur-md shrink-0">
+            <div className="flex h-16 sm:h-20 items-center justify-between px-4 sm:px-6 border-b border-slate-200 dark:border-neutral-800 bg-white/95 dark:bg-black/95 backdrop-blur-md shrink-0">
               <Link
                 href="/"
                 onClick={() => setMobileMenuOpen(false)}

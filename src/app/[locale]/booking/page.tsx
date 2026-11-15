@@ -815,7 +815,7 @@ function BookingContent() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-neutral-950 py-10">
+    <div className="min-h-screen bg-slate-50 dark:bg-black py-10">
       <div ref={stepContainerRef} className="max-w-4xl mx-auto px-4 sm:px-6">
         {/* Progress Stepper */}
         {step < 6 && (
@@ -875,7 +875,7 @@ function BookingContent() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
-            className="bg-white dark:bg-neutral-900 rounded-2xl border border-border dark:border-neutral-800 shadow-md p-6 md:p-8"
+            className="bg-white dark:bg-[#0d0d0d] rounded-2xl border border-border dark:border-neutral-800 shadow-md p-6 md:p-8"
           >
             {/* STEP 1: Location & Dates */}
             {step === 1 && (
@@ -2597,7 +2597,7 @@ function BookingContent() {
                           : "Comment souhaitez-vous recevoir votre confirmation ? (3 options)"}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
                       {locale === "ar"
                         ? "يمكنك تحميل وصلك مباشرة، إرساله إلى بريدك الإلكتروني، أو إرساله إلى واتساب الوكالة لتأكيده فوراً."
                         : locale === "en"

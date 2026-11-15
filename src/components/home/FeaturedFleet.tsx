@@ -263,7 +263,7 @@ export function FeaturedFleet() {
               className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap transition-all duration-200 ${
                 activeTab === cat.id
                   ? "bg-blue-600 text-white shadow-md shadow-blue-500/20"
-                  : "bg-muted/70 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  : "bg-muted/70 dark:bg-neutral-900 text-muted-foreground dark:text-neutral-300 hover:bg-muted dark:hover:bg-neutral-800 hover:text-foreground dark:hover:text-white border border-transparent dark:border-neutral-800"
               }`}
             >
               {cat.label}
@@ -353,7 +353,7 @@ export function FeaturedFleet() {
                         {vehicle.features.slice(0, 3).map((feat, idx) => (
                           <span
                             key={idx}
-                            className="px-2 py-0.5 rounded bg-muted/70 text-muted-foreground text-[10px] font-medium"
+                            className="px-2 py-0.5 rounded bg-muted/70 dark:bg-neutral-800/80 text-muted-foreground dark:text-neutral-200 text-[10px] font-medium border border-transparent dark:border-neutral-700/50"
                           >
                             {getVehicleFeatureLabel(feat, locale)}
                           </span>

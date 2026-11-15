@@ -451,7 +451,7 @@ function BookingStatusContent() {
   const isConfirmed = booking?.bookingStatus === "confirmed";
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-neutral-950 py-12 sm:py-16 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-slate-50 dark:bg-black py-12 sm:py-16 px-4 sm:px-6 lg:px-8">
       <div className="max-w-4xl mx-auto space-y-8">
         {/* Header */}
         <div className="text-center space-y-2">
@@ -468,7 +468,7 @@ function BookingStatusContent() {
         </div>
 
         {/* Lookup Search Form */}
-        <div className="p-5 sm:p-7 rounded-2xl sm:rounded-3xl bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 shadow-xl">
+        <div className="p-5 sm:p-7 rounded-2xl sm:rounded-3xl bg-white dark:bg-[#0d0d0d] border border-slate-200 dark:border-neutral-800 shadow-xl">
           <form onSubmit={handleLookup} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
@@ -542,7 +542,7 @@ function BookingStatusContent() {
         {booking && (
           <div className="space-y-6 animate-in fade-in duration-300">
             {/* Top Reference Card & Action Bar */}
-            <div className="p-6 rounded-3xl bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 shadow-xl space-y-6">
+            <div className="p-6 rounded-3xl bg-white dark:bg-[#0d0d0d] border border-slate-200 dark:border-neutral-800 shadow-xl space-y-6">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-5 border-b border-slate-100 dark:border-neutral-800">
                 <div>
                   <span className="text-[11px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">

@@ -143,7 +143,7 @@ function VehiclesContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FAFAF9] dark:bg-neutral-950">
+    <div className="min-h-screen bg-[#FAFAF9] dark:bg-black">
       {/* Hero Banner */}
       <div className="relative bg-[#0A0A0B] py-20 overflow-hidden">
         <div
@@ -196,13 +196,13 @@ function VehiclesContent() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder={locale === "fr" ? "Rechercher Clio, Sportage, MG ZS, Swift..." : locale === "ar" ? "ابحث عن كليو، سبورتاج، إم جي..." : "Search Clio, Sportage, MG ZS, Swift..."}
-              className="w-full pl-10 pr-4 py-3 rounded-xl border border-border bg-white dark:bg-neutral-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm dark:text-white"
+              className="w-full pl-10 pr-4 py-3 rounded-xl border border-border dark:border-neutral-800 bg-white dark:bg-[#0d0d0d] shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm text-foreground dark:text-white dark:placeholder-neutral-400"
             />
           </div>
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-2 px-5 py-3 rounded-xl border shadow-sm hover:bg-gray-50 dark:hover:bg-neutral-700 transition-colors text-sm font-medium ${
-              hasActiveFilters ? "border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300" : "border-border bg-white dark:bg-neutral-800 dark:text-white"
+            className={`flex items-center gap-2 px-5 py-3 rounded-xl border shadow-sm hover:bg-gray-50 dark:hover:bg-neutral-800 transition-colors text-sm font-medium ${
+              hasActiveFilters ? "border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300" : "border-border dark:border-neutral-800 bg-white dark:bg-[#0d0d0d] text-foreground dark:text-white"
             }`}
           >
             <SlidersHorizontal className="w-4 h-4" />
@@ -213,7 +213,7 @@ function VehiclesContent() {
             aria-label={locale === "ar" ? "ترتيب" : locale === "en" ? "Sort by" : "Trier par"}
             value={sortBy}
             onChange={e => setSortBy(e.target.value)}
-            className="px-4 py-3 rounded-xl border border-border bg-white dark:bg-neutral-800 dark:text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm"
+            className="px-4 py-3 rounded-xl border border-border dark:border-neutral-800 bg-white dark:bg-[#0d0d0d] text-foreground dark:text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-400 text-sm"
           >
             <option value="price_asc">{t("vehicles.priceAsc")}</option>
             <option value="price_desc">{t("vehicles.priceDesc")}</option>
@@ -228,56 +228,56 @@ function VehiclesContent() {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              className="bg-white dark:bg-neutral-800 rounded-2xl border border-border shadow-sm p-6 mb-6 overflow-hidden"
+              className="bg-white dark:bg-[#0d0d0d] rounded-2xl border border-border dark:border-neutral-800 shadow-sm p-6 mb-6 overflow-hidden"
             >
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">{t("vehicles.transmission")}</label>
+                  <label className="text-xs font-semibold text-muted-foreground dark:text-neutral-300 uppercase tracking-wide mb-2 block">{t("vehicles.transmission")}</label>
                   <div className="flex flex-wrap gap-2">
                     {TRANSMISSIONS.map(tr => (
                       <button key={tr} onClick={() => setTransmission(transmission === tr ? "" : tr)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${transmission === tr ? "bg-amber-500 text-white border-amber-500" : "border-border hover:border-amber-300 dark:text-white"}`}>
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${transmission === tr ? "bg-amber-500 text-white border-amber-500 font-bold" : "border-border dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/80 hover:border-amber-300 text-foreground dark:text-white"}`}>
                         {getTransmissionLabel(tr)}
                       </button>
                     ))}
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">{t("vehicles.fuel")}</label>
+                  <label className="text-xs font-semibold text-muted-foreground dark:text-neutral-300 uppercase tracking-wide mb-2 block">{t("vehicles.fuel")}</label>
                   <div className="flex flex-wrap gap-2">
                     {FUELS.map(f => (
                       <button key={f} onClick={() => setFuelType(fuelType === f ? "" : f)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${fuelType === f ? "bg-amber-500 text-white border-amber-500" : "border-border hover:border-amber-300 dark:text-white"}`}>
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${fuelType === f ? "bg-amber-500 text-white border-amber-500 font-bold" : "border-border dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/80 hover:border-amber-300 text-foreground dark:text-white"}`}>
                         {fuelEmoji[f]} {getFuelLabel(f)}
                       </button>
                     ))}
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">{t("vehicles.seats")}</label>
+                  <label className="text-xs font-semibold text-muted-foreground dark:text-neutral-300 uppercase tracking-wide mb-2 block">{t("vehicles.seats")}</label>
                   <div className="flex flex-wrap gap-2">
                     {SEATS_OPTIONS.map(s => (
                       <button key={s} onClick={() => setSeats(seats === s ? "" : s)}
-                        className={`w-10 h-10 rounded-lg text-sm font-medium border transition-colors ${seats === s ? "bg-amber-500 text-white border-amber-500" : "border-border hover:border-amber-300 dark:text-white"}`}>
+                        className={`w-10 h-10 rounded-lg text-sm font-medium border transition-colors ${seats === s ? "bg-amber-500 text-white border-amber-500 font-bold" : "border-border dark:border-neutral-700 bg-gray-50 dark:bg-neutral-800/80 hover:border-amber-300 text-foreground dark:text-white"}`}>
                         {s}+
                       </button>
                     ))}
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 block">
+                  <label className="text-xs font-semibold text-muted-foreground dark:text-neutral-300 uppercase tracking-wide mb-2 block">
                     {t("vehicles.priceRange")}: {maxPrice} TND/j
                   </label>
                   <input type="range" min={50} max={300} step={10} value={maxPrice}
                     onChange={e => setMaxPrice(Number(e.target.value))}
                     className="w-full accent-amber-500" />
-                  <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                  <div className="flex justify-between text-xs text-muted-foreground dark:text-neutral-400 mt-1">
                     <span>50 TND</span><span>300 TND</span>
                   </div>
                 </div>
               </div>
               {hasActiveFilters && (
-                <button onClick={clearFilters} className="mt-4 flex items-center gap-1.5 text-xs text-red-500 hover:text-red-700 font-medium transition-colors">
+                <button onClick={clearFilters} className="mt-4 flex items-center gap-1.5 text-xs text-red-500 hover:text-red-400 font-semibold transition-colors">
                   <X className="w-3.5 h-3.5" />
                   {locale === "fr" ? "Effacer les filtres" : locale === "ar" ? "مسح الفلاتر" : "Clear filters"}
                 </button>
@@ -349,11 +349,11 @@ function VehiclesContent() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ delay: idx * 0.03 }}
-                    className="bg-white dark:bg-neutral-900 rounded-2xl border border-border/70 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden group flex flex-col justify-between charging-card"
+                    className="bg-white dark:bg-[#0d0d0d] rounded-2xl border border-border/70 dark:border-neutral-800 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden group flex flex-col justify-between charging-card"
                   >
                     <div>
                       {/* Image Thumbnail */}
-                      <div className="relative h-52 overflow-hidden bg-gray-100 dark:bg-neutral-800">
+                      <div className="relative h-52 overflow-hidden bg-gray-100 dark:bg-neutral-900">
                         <VehicleImage
                           src={primaryImg}
                           alt={`${v.brand} ${v.model}`}
@@ -392,15 +392,15 @@ function VehiclesContent() {
 
                         {/* Specifications Pill Badges */}
                         <div className="flex flex-wrap gap-1.5 mb-4">
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/60 dark:bg-neutral-800 px-2 py-0.5 rounded-md font-medium">
+                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/60 dark:bg-neutral-800 dark:text-neutral-200 px-2 py-0.5 rounded-md font-medium">
                             <Gauge className="w-3 h-3" />
                             {getTransmissionLabel(v.transmission)}
                           </span>
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/60 dark:bg-neutral-800 px-2 py-0.5 rounded-md font-medium">
+                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/60 dark:bg-neutral-800 dark:text-neutral-200 px-2 py-0.5 rounded-md font-medium">
                             <Fuel className="w-3 h-3" />
                             {getFuelLabel(v.fuelType)}
                           </span>
-                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/60 dark:bg-neutral-800 px-2 py-0.5 rounded-md font-medium">
+                          <span className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/60 dark:bg-neutral-800 dark:text-neutral-200 px-2 py-0.5 rounded-md font-medium">
                             <Users className="w-3 h-3" />
                             {v.seats} {locale === "ar" ? "مقاعد" : locale === "en" ? "seats" : "places"}
                           </span>
@@ -413,7 +413,7 @@ function VehiclesContent() {
 
                     {/* Bottom Pricing & Actions */}
                     <div className="p-5 pt-0">
-                      <div className="flex items-end justify-between border-t border-border/60 pt-4">
+                      <div className="flex items-end justify-between border-t border-border/60 dark:border-neutral-700 pt-4">
                         <div>
                           <div className="flex items-baseline gap-1">
                             <span className="text-2xl font-black text-foreground">{dailyTND}</span>
@@ -465,7 +465,7 @@ function VehiclesContent() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-3xl bg-white dark:bg-neutral-900 rounded-3xl overflow-hidden shadow-2xl border border-border max-h-[90vh] flex flex-col"
+              className="relative w-full max-w-3xl bg-white dark:bg-[#0a0a0a] rounded-3xl overflow-hidden shadow-2xl border border-border dark:border-neutral-800 max-h-[90vh] flex flex-col"
             >
               {/* Close Button */}
               <button
@@ -478,7 +478,7 @@ function VehiclesContent() {
 
               <div className="overflow-y-auto flex-1 p-6 sm:p-8 space-y-6">
                 {/* Main Large Image */}
-                <div className="relative aspect-[16/9] w-full rounded-2xl overflow-hidden bg-gray-100 dark:bg-neutral-800 shadow-inner">
+                <div className="relative aspect-[16/9] w-full rounded-2xl overflow-hidden bg-gray-100 dark:bg-neutral-900 shadow-inner">
                   <VehicleImage
                     src={getVehicleImages(modalVehicle)[modalActiveImage] || getVehicleImages(modalVehicle)[0]}
                     alt={`${modalVehicle.brand} ${modalVehicle.model}`}
@@ -628,7 +628,7 @@ function VehiclesContent() {
                   <button
                     type="button"
                     onClick={() => setModalVehicle(null)}
-                    className="px-4 py-2.5 rounded-xl border border-border text-xs font-semibold hover:bg-muted transition-colors"
+                    className="px-4 py-2.5 rounded-xl border border-border text-xs font-semibold hover:bg-muted transition-colors dark:text-neutral-300"
                   >
                     {locale === "fr" ? "Fermer" : locale === "ar" ? "إغلاق" : "Close"}
                   </button>

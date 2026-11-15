@@ -424,11 +424,11 @@ function AdminLayoutContent({
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#07090e] text-slate-900 dark:text-slate-100 flex flex-col lg:flex-row antialiased transition-colors duration-300 selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-slate-50 dark:bg-black text-slate-900 dark:text-slate-100 flex flex-col lg:flex-row antialiased transition-colors duration-300 selection:bg-blue-600 selection:text-white">
       {/* DESKTOP SIDEBAR */}
-      <aside className="hidden lg:flex flex-col w-72 shrink-0 bg-white/95 dark:bg-[#0b0f17]/95 border-r border-slate-200 dark:border-slate-800/80 backdrop-blur-xl sticky top-0 h-screen z-30 transition-colors duration-300">
+      <aside className="hidden lg:flex flex-col w-72 shrink-0 bg-white/95 dark:bg-[#0a0a0a]/95 border-r border-slate-200 dark:border-neutral-800 backdrop-blur-xl sticky top-0 h-screen z-30 transition-colors duration-300">
         {/* Brand Header */}
-        <div className="h-20 px-6 flex items-center justify-between border-b border-slate-200 dark:border-slate-800/80">
+        <div className="h-20 px-6 flex items-center justify-between border-b border-slate-200 dark:border-neutral-800">
           <Link href="/admin" className="flex items-center gap-3 group">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-blue-400 flex items-center justify-center text-white shadow-lg shadow-blue-500/25 group-hover:scale-105 transition-transform">
               <Car className="w-5 h-5" />
@@ -667,7 +667,7 @@ function AdminLayoutContent({
       {/* MAIN VIEWPORT */}
       <div className="flex-1 flex flex-col min-w-0 w-full overflow-x-hidden">
         {/* TOP NAVIGATION BAR */}
-        <header className="h-16 sm:h-20 bg-white/80 dark:bg-[#0b0f17]/80 border-b border-slate-200 dark:border-slate-800/80 backdrop-blur-xl px-3 sm:px-6 md:px-8 flex items-center justify-between sticky top-0 z-20 transition-colors duration-300 w-full max-w-full">
+        <header className="h-16 sm:h-20 bg-white/80 dark:bg-[#0a0a0a]/90 border-b border-slate-200 dark:border-neutral-800 backdrop-blur-xl px-3 sm:px-6 md:px-8 flex items-center justify-between sticky top-0 z-20 transition-colors duration-300 w-full max-w-full">
           {/* Mobile hamburger & search */}
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
             <button
