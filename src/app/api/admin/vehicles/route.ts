@@ -5,7 +5,6 @@ import { connectDB } from "@/lib/db";
 import Vehicle from "@/models/Vehicle";
 import VehicleCategory from "@/models/VehicleCategory";
 import { sanitizeQuery } from "@/lib/utils";
-import { requireManager, requireStaff } from "@/lib/apiAuth";
 import { deleteImages, markImagesAttached } from "@/lib/cloudinary";
 import { requirePermission } from "@/lib/permissions";
 
@@ -216,7 +215,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const guard = await requirePermission("fleet", "edit");
+  const guard = await requirePermission("fleet", "create");
   if (!guard.ok) return guard.response;
 
   const parsed = vehicleInputSchema.safeParse(await request.json().catch(() => ({})));
@@ -335,7 +334,7 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const guard = await requirePermission("fleet", "edit");
+  const guard = await requirePermission("fleet", "delete");
   if (!guard.ok) return guard.response;
 
   try {

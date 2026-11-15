@@ -6,14 +6,13 @@ export const dynamic = "force-dynamic";
 
 async function checkAdmin(request?: NextRequest) {
   const guard = await requirePermission("settings", request?.method === "GET" ? "view" : "edit");
-  return guard.ok ? guard.session : null;
+  return guard;
 }
 
 export async function POST(request: NextRequest) {
-  const session = await checkAdmin(request);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guard = await checkAdmin(request);
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   try {
     const body = await request.json();

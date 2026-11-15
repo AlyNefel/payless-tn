@@ -16,3 +16,4 @@ export { default as MaintenanceRecord } from "./MaintenanceRecord";
 export { default as AgencySetting } from "./AgencySetting";
 export { default as AuditLog } from "./AuditLog";
 export { default as NewsletterSubscriber } from "./NewsletterSubscriber";
+export { default as Role } from "./Role";

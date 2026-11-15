@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, X, Save, Upload, Loader2, Eye, EyeOff, AlertCircle } from "lucide-react";
+import { Plus, Trash2, X, Save, Upload, Loader2, Eye, EyeOff, AlertCircle } from "lucide-react";
 import { OptionIcon, OPTION_ICON_CHOICES } from "@/components/ui/OptionIcon";
+import { ActionMenu, QuickView, Field, Section, ViewToggle, btn, standardActions, useViewMode, usePermissions } from "@/components/admin/ui";
 
 type PricingType = "per_day" | "per_rental" | "per_unit";
 
@@ -66,6 +67,9 @@ const inputCls =
   "w-full rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-3 py-2 text-xs text-slate-800 dark:text-white focus:outline-none focus:border-blue-500";
 
 export default function AdminOptionsPage() {
+  const [view, setView] = useViewMode("options", "grid");
+  const { can } = usePermissions();
+  const [viewing, setViewing] = useState<ExtraDoc | null>(null);
   const [extras, setExtras] = useState<ExtraDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -217,6 +221,51 @@ export default function AdminOptionsPage() {
     await load();
   };
 
+
+  const priceLabel = (e: ExtraDoc) =>
+    e.selectionMode === "amount"
+      ? `${(e.amountMin ?? 0) / 100}–${(e.amountMax ?? 0) / 100} TND (au choix)`
+      : e.price === 0
+      ? "Offert"
+      : `${(e.price / 100).toLocaleString("fr-FR")} TND · ${PRICING_LABELS[e.pricingType]}`;
+
+  const duplicate = async (e: ExtraDoc) => {
+    const res = await fetch("/api/admin/extras", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: { fr: `${e.name.fr} (copie)`, en: e.name.en || e.name.fr, ar: e.name.ar || e.name.fr },
+        description: e.description,
+        icon: e.icon,
+        priceTnd: e.price / 100,
+        pricingType: e.pricingType,
+        maxQuantity: e.maxQuantity || 1,
+        order: (e.order || 0) + 1,
+        isActive: false,
+        selectionMode: e.selectionMode || "quantity",
+        amountMinTnd: (e.amountMin ?? 5000) / 100,
+        amountMaxTnd: (e.amountMax ?? 20000) / 100,
+        amountStepTnd: (e.amountStep ?? 5000) / 100,
+      }),
+    });
+    if (!res.ok) alert((await res.json().catch(() => ({}))).error || "Duplication impossible");
+    await load();
+  };
+
+  /** Unified option actions: Voir / Modifier / Voir & modifier, show-hide, duplicate, delete. */
+  const optionActions = (e: ExtraDoc) =>
+    standardActions({
+      onView: () => setViewing(e),
+      onEdit: () => openEdit(e),
+      onViewEdit: () => openEdit(e),
+      onDuplicate: () => duplicate(e),
+      onDelete: () => remove(e),
+      can: { edit: can("options.edit"), delete: can("options.delete"), create: can("options.create") },
+      extra: can("options.edit")
+        ? [{ key: "toggle", label: e.isActive ? "Masquer sur le site" : "Afficher sur le site", icon: e.isActive ? EyeOff : Eye, onClick: () => toggleActive(e) }]
+        : [],
+    });
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -229,6 +278,7 @@ export default function AdminOptionsPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <ViewToggle value={view} onChange={setView} />
           <button
             onClick={() => setAllActive(true)}
             className="inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200"
@@ -261,6 +311,53 @@ export default function AdminOptionsPage() {
         <div className="flex justify-center py-16">
           <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
         </div>
+      ) : view === "table" ? (
+        <div className="rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 overflow-x-auto">
+          <table className="w-full text-xs min-w-[640px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                <th className="p-3">Option</th>
+                <th className="p-3">Prix</th>
+                <th className="p-3">Choix client</th>
+                <th className="p-3">Ordre</th>
+                <th className="p-3">Visibilité</th>
+                <th className="p-3 w-12" aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {extras.map((e) => (
+                <tr key={e._id} className={`hover:bg-slate-50 dark:hover:bg-slate-900/50 ${e.isActive ? "" : "opacity-60"}`}>
+                  <td className="p-3">
+                    <button type="button" onClick={() => setViewing(e)} className="flex items-center gap-2.5 text-left">
+                      <OptionIcon icon={e.icon} size="sm" />
+                      <span className="font-bold text-slate-900 dark:text-white">{e.name.fr}</span>
+                    </button>
+                  </td>
+                  <td className="p-3 font-mono">{priceLabel(e)}</td>
+                  <td className="p-3">{e.selectionMode === "amount" ? "Montant (barre)" : `Quantité (max ${e.maxQuantity})`}</td>
+                  <td className="p-3">{e.order}</td>
+                  <td className="p-3">
+                    {can("options.edit") ? (
+                      <button
+                        type="button"
+                        onClick={() => toggleActive(e)}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          e.isActive ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                        }`}
+                      >
+                        {e.isActive ? "Visible" : "Masquée"}
+                      </button>
+                    ) : e.isActive ? "Visible" : "Masquée"}
+                  </td>
+                  <td className="p-3 text-right">
+                    <ActionMenu items={optionActions(e)} label={`Actions pour ${e.name.fr}`} size="sm" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {extras.length === 0 && !error && <p className="text-sm text-slate-500 text-center py-10">Aucune option pour le moment.</p>}
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {extras.map((e) => (
@@ -275,21 +372,22 @@ export default function AdminOptionsPage() {
                 <p className="font-bold text-sm text-slate-900 dark:text-white break-words">{e.name.fr}</p>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{e.name.en}</p>
                 <p className="text-xs font-mono font-semibold text-blue-600 dark:text-blue-400">
-                  {e.price === 0 ? "Offert" : `${(e.price / 100).toLocaleString("fr-FR")} TND`}
-                  <span className="text-slate-400 font-normal"> · {PRICING_LABELS[e.pricingType]} · max {e.maxQuantity}</span>
+                  {priceLabel(e)}
                 </p>
                 {!e.isActive && <p className="text-[10px] font-bold uppercase text-amber-600">Masquée</p>}
               </div>
-              <div className="flex flex-col gap-1.5 shrink-0">
-                <button onClick={() => openEdit(e)} aria-label={`Modifier ${e.name.fr}`} className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-slate-600 dark:text-slate-300">
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-                <button onClick={() => toggleActive(e)} aria-label={e.isActive ? `Masquer ${e.name.fr}` : `Afficher ${e.name.fr}`} className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-amber-900/30 text-slate-600 dark:text-slate-300">
-                  {e.isActive ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-                <button onClick={() => remove(e)} aria-label={`Supprimer ${e.name.fr}`} className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-900/30 text-slate-500 hover:text-red-500">
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+              <div className="flex flex-col items-center gap-1.5 shrink-0">
+                <ActionMenu items={optionActions(e)} label={`Actions pour ${e.name.fr}`} size="sm" />
+                {can("options.edit") && (
+                  <button
+                    onClick={() => toggleActive(e)}
+                    aria-label={e.isActive ? `Masquer ${e.name.fr}` : `Afficher ${e.name.fr}`}
+                    title={e.isActive ? "Masquer sur le site" : "Afficher sur le site"}
+                    className="w-8 h-8 inline-flex items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-amber-50 dark:hover:bg-amber-900/30 text-slate-600 dark:text-slate-300"
+                  >
+                    {e.isActive ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -451,6 +549,51 @@ export default function AdminOptionsPage() {
           </form>
         </div>
       )}
+      <QuickView
+        open={Boolean(viewing)}
+        onClose={() => setViewing(null)}
+        title={viewing?.name.fr}
+        subtitle={viewing ? priceLabel(viewing) : ""}
+        footer={
+          viewing &&
+          can("options.edit") && (
+            <button
+              type="button"
+              className={`${btn.base} ${btn.primary}`}
+              onClick={() => {
+                const e = viewing;
+                setViewing(null);
+                openEdit(e);
+              }}
+            >
+              Voir & modifier
+            </button>
+          )
+        }
+      >
+        {viewing && (
+          <>
+            <div className="flex justify-center">
+              <OptionIcon icon={viewing.icon} size="lg" />
+            </div>
+            <Section title="Noms">
+              <Field label="Français">{viewing.name.fr}</Field>
+              <Field label="English">{viewing.name.en}</Field>
+              <Field label="العربية">{viewing.name.ar}</Field>
+            </Section>
+            <Section title="Tarification">
+              <Field label="Prix">{priceLabel(viewing)}</Field>
+              <Field label="Choix client">{viewing.selectionMode === "amount" ? "Montant au choix" : `Quantité, max ${viewing.maxQuantity}`}</Field>
+              <Field label="Visibilité">{viewing.isActive ? "Visible sur le site" : "Masquée"}</Field>
+            </Section>
+            {viewing.description?.fr && (
+              <Section title="Description">
+                <p>{viewing.description.fr}</p>
+              </Section>
+            )}
+          </>
+        )}
+      </QuickView>
     </div>
   );
 }

@@ -27,6 +27,7 @@ import {
 import { VehicleItem } from "../mockData";
 import { VehicleImageManager, newImageKey, type ManagedImage } from "@/components/admin/VehicleImageManager";
 import { cloudinaryUrl } from "@/lib/cloudinaryUrl";
+import { ActionMenu, QuickView, Field, Section, ViewToggle, btn, standardActions, useViewMode, usePermissions } from "@/components/admin/ui";
 
 interface CategoryOption {
   _id: string;
@@ -274,7 +275,11 @@ export default function AdminFleetPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [selectedTransmission, setSelectedTransmission] = useState<string>("All");
   const [selectedStatus, setSelectedStatus] = useState<string>("All");
-  const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+  const [viewMode, setViewMode] = useViewMode("fleet", "grid");
+  const { can } = usePermissions();
+  const [viewingCar, setViewingCar] = useState<FleetVehicle | null>(null);
+  /** "View & Edit": the editor also shows the vehicle summary (plates, status, agency). */
+  const [editSummary, setEditSummary] = useState<FleetVehicle | null>(null);
   const [savingVehicle, setSavingVehicle] = useState(false);
   // Gallery being edited + every Cloudinary upload of this modal session (for orphan cleanup).
   const [images, setImages] = useState<ManagedImage[]>([]);
@@ -347,6 +352,7 @@ export default function AdminFleetPage() {
 
   /** Closing without saving: uploads made in this session are orphans → delete them. */
   const closeModal = async () => {
+    setEditSummary(null);
     const pending = sessionUploads;
     setShowAddModal(false);
     setEditingVehicle(null);
@@ -607,6 +613,31 @@ export default function AdminFleetPage() {
     });
   };
 
+
+  /** Unified fleet actions: Voir / Modifier / Voir & modifier, workshop toggle, archive. */
+  const fleetActions = (car: FleetVehicle) =>
+    standardActions({
+      onView: () => setViewingCar(car),
+      onEdit: () => openEditModal(car),
+      onViewEdit: () => {
+        setEditSummary(car);
+        openEditModal(car);
+      },
+      onDelete: () => handleArchive(car.id),
+      deleteLabel: "Archiver le modèle",
+      can: { edit: can("fleet.edit"), delete: can("fleet.delete") },
+      extra: can("fleet.edit")
+        ? [
+            {
+              key: "workshop",
+              label: car.status === "maintenance" ? "Remettre disponible" : "Passer en atelier",
+              icon: Wrench,
+              onClick: () => handleToggleStatus(car.id, car.status === "maintenance" ? "available" : "maintenance"),
+            },
+          ]
+        : [],
+    });
+
   return (
     <div className="space-y-7">
       {/* Page Header */}
@@ -723,21 +754,7 @@ export default function AdminFleetPage() {
               <ChevronDown className="w-3 h-3 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
           ))}
-          <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-1">
-            {(["grid", "table"] as const).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => setViewMode(mode)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
-                  viewMode === mode
-                    ? "bg-blue-600 text-white"
-                    : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                }`}
-              >
-                {mode === "grid" ? "Grille" : "Tableau"}
-              </button>
-            ))}
-          </div>
+          <ViewToggle value={viewMode} onChange={setViewMode} />
         </div>
       </div>
 
@@ -840,38 +857,18 @@ export default function AdminFleetPage() {
                   </div>
                 </div>
               </div>
-              <div className="p-4 pt-0 border-t border-slate-100 dark:border-slate-800/60 mt-3 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() =>
-                      handleToggleStatus(
-                        car.id,
-                        car.status === "available"
-                          ? "maintenance"
-                          : car.status === "maintenance"
-                          ? "available"
-                          : "available"
-                      )
-                    }
-                    title="Basculer Statut Atelier/Dispo"
-                    className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
-                  >
-                    <Wrench className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleArchive(car.id)}
-                    title="Supprimer / Archiver"
-                    className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-red-50 dark:hover:bg-red-500/20 text-slate-500 dark:text-slate-400 hover:text-red-500 transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <button
-                  onClick={() => openEditModal(car)}
-                  className="px-3 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-600/20 hover:bg-blue-100 dark:hover:bg-blue-600/30 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 text-xs font-semibold transition-colors"
-                >
-                  Modifier
+              <div className="p-4 pt-3 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-between gap-2">
+                <button type="button" onClick={() => setViewingCar(car)} className={`${btn.base} ${btn.secondary}`}>
+                  Voir
                 </button>
+                <div className="flex items-center gap-1">
+                  {can("fleet.edit") && (
+                    <button type="button" onClick={() => openEditModal(car)} className={`${btn.base} ${btn.primary}`}>
+                      Modifier
+                    </button>
+                  )}
+                  <ActionMenu items={fleetActions(car)} label={`Actions pour ${car.brand} ${car.model}`} />
+                </div>
               </div>
             </div>
           ))}
@@ -908,9 +905,9 @@ export default function AdminFleetPage() {
                           className="w-12 h-9 rounded-lg object-cover bg-slate-100 dark:bg-slate-900 shrink-0"
                         />
                         <div>
-                          <p className="font-bold text-slate-900 dark:text-white">
+                          <button type="button" onClick={() => setViewingCar(car)} className="font-bold text-slate-900 dark:text-white hover:text-blue-600 text-left">
                             {car.brand} {car.model}
-                          </p>
+                          </button>
                           <p className="text-[11px] text-slate-400">
                             {car.year} • {car.color}
                           </p>
@@ -919,6 +916,7 @@ export default function AdminFleetPage() {
                     </td>
                     <td className="px-5 py-3.5 font-mono font-medium text-amber-500 dark:text-amber-300">
                       {car.licensePlate}
+                      {car.units.length > 1 && <span className="block font-sans text-[10px] text-slate-400">+{car.units.length - 1} autre(s)</span>}
                     </td>
                     <td className="px-5 py-3.5 text-slate-600 dark:text-slate-300">
                       {car.category}
@@ -952,12 +950,7 @@ export default function AdminFleetPage() {
                       )}
                     </td>
                     <td className="px-5 py-3.5 text-right">
-                      <button
-                        onClick={() => openEditModal(car)}
-                        className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-medium transition-colors"
-                      >
-                        Éditer
-                      </button>
+                      <ActionMenu items={fleetActions(car)} label={`Actions pour ${car.brand} ${car.model}`} size="sm" />
                     </td>
                   </tr>
                 ))}
@@ -967,12 +960,86 @@ export default function AdminFleetPage() {
         </div>
       )}
 
+      <QuickView
+        open={Boolean(viewingCar)}
+        onClose={() => setViewingCar(null)}
+        title={viewingCar ? `${viewingCar.brand} ${viewingCar.model}` : ""}
+        subtitle={viewingCar ? `${viewingCar.year} · ${viewingCar.category}` : ""}
+        footer={
+          viewingCar &&
+          can("fleet.edit") && (
+            <button
+              type="button"
+              className={`${btn.base} ${btn.primary}`}
+              onClick={() => {
+                const car = viewingCar;
+                setViewingCar(null);
+                setEditSummary(car);
+                openEditModal(car);
+              }}
+            >
+              Voir & modifier
+            </button>
+          )
+        }
+      >
+        {viewingCar && (
+          <>
+            {viewingCar.imageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element -- remote legacy hosts + Cloudinary transforms
+              <img
+                src={cloudinaryUrl(viewingCar.imageUrl, { width: 800, crop: "limit" })}
+                alt={`${viewingCar.brand} ${viewingCar.model}`}
+                className="w-full aspect-[16/10] object-contain rounded-xl bg-white"
+              />
+            )}
+            <Section title="Tarifs">
+              <Field label="Prix / jour">{viewingCar.pricing.daily} TND</Field>
+              <Field label="Semaine / mois">
+                {viewingCar.pricing.weekly} / {viewingCar.pricing.monthly} TND
+              </Field>
+              <Field label="Caution">{viewingCar.pricing.deposit} TND</Field>
+              <Field label="Durée minimale">{viewingCar.minRentalDays || 1} jour(s)</Field>
+            </Section>
+            <Section title={`Véhicules physiques (${viewingCar.units.length || viewingCar.totalUnits})`}>
+              {(viewingCar.units.length ? viewingCar.units : [{ licensePlate: viewingCar.licensePlate, status: "active" as const }]).map((u, i) => (
+                <Field key={u._id || i} label={u.licensePlate || `Unité ${i + 1} (immat. à saisir)`}>
+                  {u.status === "active" ? "En service" : u.status === "maintenance" ? "Au garage" : "Hors service"}
+                  {u.mileage ? ` · ${u.mileage.toLocaleString("fr-FR")} km` : ""}
+                </Field>
+              ))}
+            </Section>
+            <Section title="Caractéristiques">
+              <Field label="Boîte / carburant">
+                {viewingCar.transmission} / {viewingCar.fuelType}
+              </Field>
+              <Field label="Places / portes">
+                {viewingCar.seats} / {viewingCar.doors}
+              </Field>
+              <Field label="Agence">{viewingCar.location}</Field>
+              <Field label="Équipements">{viewingCar.features.join(", ") || "—"}</Field>
+            </Section>
+          </>
+        )}
+      </QuickView>
+
       {/* ═══════════════════════════════════════════════════════════════════════
           ADD / EDIT VEHICLE MODAL — Full Car Model Add/Edit (Screenshots Match)
       ═══════════════════════════════════════════════════════════════════════ */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/75 backdrop-blur-sm overflow-y-auto">
           <div className="w-full max-w-3xl rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl my-8">
+            {editSummary && editingVehicle && (
+              <div className="px-6 py-3 border-b border-slate-200 dark:border-slate-700 bg-blue-50/60 dark:bg-blue-950/20 rounded-t-2xl flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-slate-600 dark:text-slate-300">
+                <span>
+                  <b>{editSummary.units.length || editSummary.totalUnits}</b> véhicule(s) :{" "}
+                  {(editSummary.units.map((u) => u.licensePlate).filter(Boolean).join(", ") || editSummary.licensePlate) || "—"}
+                </span>
+                <span>Agence : <b>{editSummary.location}</b></span>
+                <span>Statut : <b>{editSummary.status}</b></span>
+                <span>{editSummary.images.length} photo(s)</span>
+              </div>
+            )}
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
               <div className="flex items-center gap-2.5">

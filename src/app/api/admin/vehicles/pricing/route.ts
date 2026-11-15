@@ -5,14 +5,13 @@ import { requirePermission } from "@/lib/permissions";
 
 async function checkAdmin(level: "view" | "edit" = "edit") {
   const guard = await requirePermission("pricing", level);
-  return guard.ok ? guard.session : null;
+  return guard;
 }
 
 export async function GET(request: NextRequest) {
-  const session = await checkAdmin("view");
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guard = await checkAdmin("view");
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   try {
     await connectDB();
@@ -56,10 +55,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
-  const session = await checkAdmin();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guard = await checkAdmin();
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   try {
     await connectDB();

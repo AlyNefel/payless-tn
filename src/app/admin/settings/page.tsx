@@ -89,6 +89,10 @@ export default function SettingsPage() {
     minLuxuryAge: "25",
     cancellationHours: "48",
     cancellationFeeRate: "20",
+    // Homepage trust section (hidden while empty — never shown with invented values).
+    googleRating: "",
+    googleReviewCount: "",
+    googleReviewsUrl: "",
   });
 
   // Payment Methods Configuration
@@ -244,6 +248,9 @@ export default function SettingsPage() {
             minLuxuryAge: s.minLuxuryAge !== undefined ? String(s.minLuxuryAge) : prev.minLuxuryAge,
             cancellationHours: s.cancellationHours !== undefined ? String(s.cancellationHours) : prev.cancellationHours,
             cancellationFeeRate: s.cancellationFeeRate !== undefined ? String(s.cancellationFeeRate) : prev.cancellationFeeRate,
+            googleRating: s.googleRating !== undefined ? String(s.googleRating) : prev.googleRating,
+            googleReviewCount: s.googleReviewCount !== undefined ? String(s.googleReviewCount) : prev.googleReviewCount,
+            googleReviewsUrl: s.googleReviewsUrl !== undefined ? String(s.googleReviewsUrl) : prev.googleReviewsUrl,
           }));
 
           if (s.openingHours && Array.isArray(s.openingHours)) {
@@ -713,6 +720,9 @@ export default function SettingsPage() {
                     { label: "Âge minimum (Luxe / Sport)", key: "minLuxuryAge", placeholder: "25" },
                     { label: "Annulation gratuite jusqu'à (heures)", key: "cancellationHours", placeholder: "48" },
                     { label: "Frais d'annulation tardive (%)", key: "cancellationFeeRate", placeholder: "20" },
+                    { label: "Note Google réelle (accueil, ex. 4.8 — vide = masquée)", key: "googleRating", placeholder: "4.8" },
+                    { label: "Nombre d'avis Google réels", key: "googleReviewCount", placeholder: "120" },
+                    { label: "Lien vers vos avis Google", key: "googleReviewsUrl", placeholder: "https://g.page/r/…" },
                   ].map((f) => (
                     <div key={f.key}>
                       <label className="block text-xs font-semibold mb-1.5 text-slate-500">{f.label}</label>

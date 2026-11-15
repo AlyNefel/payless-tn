@@ -4,16 +4,15 @@ import { Booking, Vehicle, Customer, Location } from "@/models";
 import { sanitizeQuery } from "@/lib/utils";
 import { requirePermission } from "@/lib/permissions";
 
-async function checkAdmin(level: "view" | "edit" = "edit") {
+async function checkAdmin(level: string = "edit") {
   const guard = await requirePermission("bookings", level);
-  return guard.ok ? guard.session : null;
+  return guard;
 }
 
 export async function GET(request: NextRequest) {
-  const session = await checkAdmin("view");
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guard = await checkAdmin("view");
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   try {
     await connectDB();
@@ -74,12 +73,14 @@ export async function GET(request: NextRequest) {
     }
 
     const [rawBookings, total] = await Promise.all([
+      // Only the fields the list needs (vehicles carry their whole fleet of plates otherwise).
       Booking.find(query)
-        .populate("vehicleId")
-        .populate("vehicles.vehicleId")
-        .populate("customerId")
-        .populate("pickupLocationId")
-        .populate("returnLocationId")
+        .select("-auditHistory")
+        .populate("vehicleId", "brand model year images licensePlate")
+        .populate("vehicles.vehicleId", "brand model")
+        .populate("customerId", "firstName lastName email phone")
+        .populate("pickupLocationId", "name city")
+        .populate("returnLocationId", "name city")
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -115,7 +116,7 @@ export async function GET(request: NextRequest) {
         vehicles: b.vehicles || [],
         vehicleId: veh?._id?.toString() || (typeof b.vehicleId === "string" ? b.vehicleId : ""),
         vehicleName: multiVehName || (veh ? `${veh.brand} ${veh.model}` : "Véhicule"),
-        licensePlate: veh?.licensePlate || "TUN-2026",
+        licensePlate: (b.assignedUnits || []).map((u: any) => u.licensePlate || "immat. à saisir").join(", "),
         vehicleImage: veh?.images?.find((i: any) => i.isPrimary)?.url || veh?.images?.[0]?.url || "",
         pickupDate: b.pickupDate ? new Date(b.pickupDate).toISOString().split("T")[0] : "",
         returnDate: b.returnDate ? new Date(b.returnDate).toISOString().split("T")[0] : "",
@@ -129,7 +130,11 @@ export async function GET(request: NextRequest) {
         contributionLF2026: b.pricingBreakdown?.contributionLF2026 ?? (200 * (b.rentalDuration || 1)),
         outOfTownFee: b.pricingBreakdown?.outOfTownFee || 0,
         depositAmount: b.pricingBreakdown?.depositAmount || 0,
-        extras: b.extras || [],
+        extras: (b.extras || []).filter((e: any) => (e.quantity || 0) > 0),
+        pickupTime: b.pickupTime || "",
+        returnTime: b.returnTime || "",
+        customerNotes: b.customerNotes || "",
+        isManualBooking: Boolean(b.isManualBooking),
         customerLanguage: b.customerLanguage || "fr",
         createdAt: b.createdAt,
       };
@@ -143,10 +148,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const session = await checkAdmin();
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const guard = await checkAdmin("delete");
+  if (!guard.ok) return guard.response;
+  const session = guard.session;
 
   try {
     await connectDB();

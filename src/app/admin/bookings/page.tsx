@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   CalendarCheck2,
   Search,
@@ -28,8 +29,9 @@ import {
   ShieldCheck,
   ShieldAlert,
 } from "lucide-react";
-import { INITIAL_BOOKINGS } from "../mockData";
 import { useAdminLang } from "@/contexts/AdminLangContext";
+import { ActionMenu, StatusBadge, ViewToggle, standardActions, useViewMode, usePermissions } from "@/components/admin/ui";
+import { BookingQuickView } from "@/components/admin/BookingQuickView";
 
 export interface BookingDisplayItem {
   id: string;
@@ -61,7 +63,12 @@ export interface BookingDisplayItem {
 
 export default function AdminBookingsPage() {
   const { lang } = useAdminLang();
-  const [bookings, setBookings] = useState<BookingDisplayItem[]>(INITIAL_BOOKINGS as any);
+  const router = useRouter();
+  const [bookings, setBookings] = useState<BookingDisplayItem[]>([]);
+  const [view, setView] = useViewMode("bookings", "table");
+  const { can } = usePermissions();
+  const [viewing, setViewing] = useState<BookingDisplayItem | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("All");
   const [search, setSearch] = useState("");
   const [selectedBooking, setSelectedBooking] = useState<BookingDisplayItem | null>(null);
@@ -97,10 +104,14 @@ export default function AdminBookingsPage() {
       console.error("Failed to fetch bookings:", e);
     } finally {
       setLoading(false);
+      setLoaded(true);
     }
   };
 
   useEffect(() => {
+    // Deep links (dashboard, calendar, notifications): /admin/bookings?search=PAY-…
+    const q = new URLSearchParams(window.location.search).get("search");
+    if (q) setSearch(q);
     fetchBookings();
   }, []);
 
@@ -134,25 +145,28 @@ export default function AdminBookingsPage() {
 
   // Handle instant status change
   const handleStatusChange = async (id: string, newStatus: BookingDisplayItem["status"]) => {
+    const previous = bookings;
     setBookings((prev) =>
       prev.map((b) => (b.id === id || b._id === id ? { ...b, status: newStatus } : b))
     );
-
     try {
-      await fetch(`/api/admin/bookings/${id}`, {
+      const res = await fetch(`/api/admin/bookings/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Modification refusée");
+      setStatusChangeFeedback(
+        newStatus === "confirmed"
+          ? (lang === "fr" ? "Réservation confirmée ! Email envoyé au client." : "Booking confirmed! Email sent to customer.")
+          : (lang === "fr" ? "Statut mis à jour." : "Status updated.")
+      );
     } catch (e) {
-      console.warn("Could not sync status change with server:", e);
+      // The server refused (permission, validation…): put the previous status back.
+      setBookings(previous);
+      setStatusChangeFeedback(e instanceof Error ? e.message : "Erreur");
     }
-
-    setStatusChangeFeedback(
-      newStatus === "confirmed"
-        ? (lang === "fr" ? "Réservation confirmée ! Email envoyé au client." : "Booking confirmed! Email sent to customer.")
-        : (lang === "fr" ? `Statut mis à jour vers "${newStatus.toUpperCase()}" avec succès.` : `Status updated to "${newStatus.toUpperCase()}".`)
-    );
     setTimeout(() => setStatusChangeFeedback(null), 4000);
     setActionMenuOpenId(null);
   };
@@ -228,6 +242,65 @@ export default function AdminBookingsPage() {
     return clean;
   };
 
+  const whatsappUrlFor = (b: BookingDisplayItem) => {
+    const cleanPhone = getCleanPhone(b.customerPhone);
+    if (!cleanPhone) return null;
+    const bookingRef = b.reference || b.bookingReference || b._id || b.id;
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const msg =
+      `Bonjour *${b.customerName}*,\n\n` +
+      `✅ Votre réservation chez *Payless Car Rental Tunisie* est confirmée.\n\n` +
+      `📋 *Référence* : ${bookingRef}\n` +
+      `🚗 *Véhicule* : ${b.vehicleName}${b.licensePlate ? ` (${b.licensePlate})` : ""}\n` +
+      `📅 *Période* : du ${b.pickupDate} au ${b.returnDate} (${b.rentalDays} jours)\n` +
+      `📍 *Prise en charge* : ${b.pickupLocation}\n` +
+      `💰 *Total TTC* : ${(b.totalPrice || 0).toLocaleString("fr-FR")} TND\n\n` +
+      `📄 Bon de réservation : ${baseUrl}/api/bookings/pdf?ref=${bookingRef}`;
+    return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`;
+  };
+
+  /** Unified actions: Voir / Modifier / Voir & modifier, then documents, status and delete. */
+  const actionsFor = (b: BookingDisplayItem) => {
+    const bookingId = b._id || b.id;
+    const bookingRef = b.reference || b.bookingReference || bookingId;
+    const wa = whatsappUrlFor(b);
+    const extra = [
+      { key: "pdf", label: "Facture PDF", icon: FileText, href: `/api/bookings/pdf?ref=${bookingRef}`, external: true },
+      {
+        key: "voucher",
+        label: "Bon de réservation",
+        icon: Printer,
+        onClick: () => {
+          setSelectedBooking(b);
+          setShowVoucherModal(true);
+        },
+      },
+      {
+        key: "email",
+        label: sendingEmailForRef === bookingRef ? "Envoi en cours…" : "Renvoyer l'email",
+        icon: Mail,
+        disabled: sendingEmailForRef === bookingRef,
+        onClick: () => handleResendEmail(bookingRef),
+      },
+      ...(wa ? [{ key: "wa", label: "Confirmation WhatsApp", icon: MessageCircle, href: wa, external: true }] : []),
+      ...(can("bookings.edit") && b.status === "pending"
+        ? [{ key: "confirm", label: "Confirmer", icon: CheckCircle2, separated: true, onClick: () => handleStatusChange(bookingId, "confirmed") }]
+        : []),
+      ...(can("bookings.cancel") && !["cancelled", "rejected", "completed"].includes(b.status)
+        ? [{ key: "cancel", label: "Annuler la réservation", icon: X, onClick: () => handleStatusChange(bookingId, "cancelled") }]
+        : []),
+    ];
+    return standardActions({
+      onView: () => setViewing(b),
+      onEdit: () => router.push(`/admin/bookings/${bookingId}#statut`),
+      viewEditHref: `/admin/bookings/${bookingId}`,
+      onDelete: () => setBookingToDelete(b),
+      deleteLabel: "Supprimer la réservation",
+      can: { edit: can("bookings.edit"), delete: can("bookings.delete") },
+      extra,
+    });
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -251,6 +324,7 @@ export default function AdminBookingsPage() {
             </div>
           )}
 
+          <ViewToggle value={view} onChange={setView} />
           <button
             onClick={fetchBookings}
             className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-xs"
@@ -309,300 +383,122 @@ export default function AdminBookingsPage() {
         </div>
       </div>
 
-      {/* COMPREHENSIVE BOOKINGS TABLE */}
-      <div className="rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 shadow-xs overflow-visible">
-        <div className="overflow-x-auto overflow-y-visible">
-          <table className="w-full text-left text-xs text-slate-700 dark:text-slate-300">
+      {/* RESERVATIONS — cards or table (remembered per browser) */}
+      {!loaded ? (
+        <div className="py-16 flex justify-center">
+          <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+        </div>
+      ) : filteredBookings.length === 0 ? (
+        <div className="py-16 text-center text-sm text-slate-500 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+          {bookings.length === 0
+            ? lang === "fr" ? "Aucune réservation pour le moment." : "No reservations yet."
+            : lang === "fr" ? "Aucune réservation ne correspond aux filtres." : "No reservation matches the filters."}
+        </div>
+      ) : view === "grid" ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredBookings.map((b) => {
+            const bookingId = b._id || b.id;
+            const bookingRef = b.reference || b.bookingReference || bookingId;
+            return (
+              <div key={bookingId} className="p-4 rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-2">
+                  <button type="button" onClick={() => setViewing(b)} className="min-w-0 text-left">
+                    <span className="block font-mono font-bold text-blue-600 dark:text-blue-400">{bookingRef}</span>
+                    <span className="block text-sm font-bold text-slate-900 dark:text-white truncate">{b.customerName}</span>
+                  </button>
+                  <ActionMenu items={actionsFor(b)} label={`Actions pour ${bookingRef}`} size="sm" />
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  <StatusBadge status={b.status} />
+                  <StatusBadge status={b.paymentStatus} kind="payment" />
+                </div>
+                <div className="text-xs space-y-1 text-slate-600 dark:text-slate-300">
+                  <p className="flex items-center gap-1.5">
+                    <Car className="w-3.5 h-3.5 text-slate-400" /> {b.vehicleName}
+                    {b.licensePlate && <span className="font-mono text-[10px] text-amber-600 dark:text-amber-300">· {b.licensePlate}</span>}
+                  </p>
+                  <p className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-slate-400" /> {b.pickupDate} → {b.returnDate} ({b.rentalDays} j)
+                  </p>
+                  <p className="flex items-center gap-1.5 truncate">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400" /> {b.pickupLocation}
+                  </p>
+                </div>
+                <div className="mt-auto pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                  <span className="text-sm font-black text-slate-900 dark:text-white">{(b.totalPrice || 0).toLocaleString("fr-FR")} TND</span>
+                  <Link href={`/admin/bookings/${bookingId}`} className="text-xs font-bold text-blue-600 hover:underline">
+                    Voir & modifier →
+                  </Link>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 shadow-xs overflow-x-auto">
+          <table className="w-full min-w-[900px] text-left text-xs text-slate-700 dark:text-slate-300">
             <thead className="bg-slate-50 dark:bg-slate-900/90 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
               <tr>
-                <th className="px-5 py-3.5 font-semibold">{lang === "fr" ? "Référence & Date" : "Ref & Date"}</th>
-                <th className="px-5 py-3.5 font-semibold">{lang === "fr" ? "Client & Contact" : "Customer"}</th>
-                <th className="px-5 py-3.5 font-semibold">{lang === "fr" ? "Véhicule" : "Vehicle"}</th>
-                <th className="px-5 py-3.5 font-semibold">{lang === "fr" ? "Itinéraire & Dates" : "Dates & Location"}</th>
-                <th className="px-5 py-3.5 font-semibold">{lang === "fr" ? "Montant Total (TND)" : "Total Amount (TND)"}</th>
-                <th className="px-5 py-3.5 font-semibold">{lang === "fr" ? "Règlement" : "Payment"}</th>
-                <th className="px-5 py-3.5 font-semibold">{lang === "fr" ? "Statut" : "Status"}</th>
-                <th className="px-5 py-3.5 font-semibold text-right">{lang === "fr" ? "Actions & Options" : "Actions"}</th>
+                <th className="px-4 py-3 font-semibold">{lang === "fr" ? "Référence" : "Reference"}</th>
+                <th className="px-4 py-3 font-semibold">{lang === "fr" ? "Client" : "Customer"}</th>
+                <th className="px-4 py-3 font-semibold">{lang === "fr" ? "Véhicule" : "Vehicle"}</th>
+                <th className="px-4 py-3 font-semibold">{lang === "fr" ? "Dates" : "Dates"}</th>
+                <th className="px-4 py-3 font-semibold">Total</th>
+                <th className="px-4 py-3 font-semibold">{lang === "fr" ? "Paiement" : "Payment"}</th>
+                <th className="px-4 py-3 font-semibold">{lang === "fr" ? "Statut" : "Status"}</th>
+                <th className="px-4 py-3 w-12" aria-label="Actions" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800/60">
               {filteredBookings.map((b) => {
                 const bookingId = b._id || b.id;
                 const bookingRef = b.reference || b.bookingReference || bookingId;
-                const isMenuOpen = actionMenuOpenId === bookingId;
-                const cleanPhone = getCleanPhone(b.customerPhone);
-                const baseUrl = typeof window !== "undefined" ? window.location.origin : "https://paylesscarrental.tn";
-                const pdfUrl = `${baseUrl}/api/bookings/pdf?ref=${bookingRef}`;
-                const waMessage =
-                  `Bonjour *${b.customerName}*,\n\n` +
-                  `✅ Votre réservation chez *Payless Car Rental Tunisie* est bien CONFIRMÉE !\n\n` +
-                  `📋 *Référence* : ${bookingRef}\n` +
-                  `🚗 *Véhicule* : ${b.vehicleName}\n` +
-                  `📅 *Période* : du ${b.pickupDate} au ${b.returnDate} (${b.rentalDays} jours)\n` +
-                  `📍 *Lieu de prise en charge* : ${b.pickupLocation}\n` +
-                  `💰 *Total TTC* : ${(b.totalPrice || 0).toLocaleString("fr-FR")} TND\n\n` +
-                  `📄 *Téléchargez votre Bon de Réservation & Facture officielle (PDF)* :\n${pdfUrl}\n\n` +
-                  `Assistance 24/7 au +216 80 80 80 80.\nMerci pour votre confiance !`;
-                const waUrl = cleanPhone
-                  ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(waMessage)}`
-                  : null;
-
                 return (
                   <tr key={bookingId} className="hover:bg-slate-50 dark:hover:bg-slate-900/40 transition-colors">
-                    {/* Reference & Creation Date */}
-                    <td className="px-5 py-4">
-                      <Link
-                        href={`/admin/bookings/${bookingId}`}
-                        className="font-mono font-bold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
-                      >
+                    <td className="px-4 py-3">
+                      <button type="button" onClick={() => setViewing(b)} className="font-mono font-bold text-blue-600 dark:text-blue-400 hover:underline">
                         {bookingRef}
-                      </Link>
+                      </button>
                       <p className="text-[10px] text-slate-500 mt-0.5">
-                        {b.createdAt ? new Date(b.createdAt).toLocaleDateString("fr-FR") : "Récent"}
+                        {b.createdAt ? new Date(b.createdAt).toLocaleDateString("fr-FR") : ""}
                       </p>
                     </td>
-
-                    {/* Customer */}
-                    <td className="px-5 py-4">
+                    <td className="px-4 py-3">
                       <p className="font-semibold text-slate-900 dark:text-white">{b.customerName}</p>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
-                        <Phone className="w-3 h-3 text-slate-400" />
-                        {b.customerPhone}
+                      <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+                        <Phone className="w-3 h-3" /> {b.customerPhone}
                       </p>
                     </td>
-
-                    {/* Vehicle */}
-                    <td className="px-5 py-4">
+                    <td className="px-4 py-3">
                       <p className="font-medium text-slate-900 dark:text-white">{b.vehicleName}</p>
-                      <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-amber-600 dark:text-amber-300 font-mono text-[10px] font-bold">
-                        {b.licensePlate || "TUN-2026"}
-                      </span>
+                      {b.licensePlate && <span className="font-mono text-[10px] font-bold text-amber-600 dark:text-amber-300">{b.licensePlate}</span>}
                     </td>
-
-                    {/* Itinerary */}
-                    <td className="px-5 py-4">
-                      <p className="text-slate-800 dark:text-slate-200 font-medium">
-                        {b.pickupDate} &rarr; {b.returnDate}
-                      </p>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[200px] mt-0.5">
-                        {b.pickupLocation} ({b.rentalDays} j)
-                      </p>
+                    <td className="px-4 py-3">
+                      <p className="font-medium">{b.pickupDate} → {b.returnDate}</p>
+                      <p className="text-[10px] text-slate-500 truncate max-w-[200px]">{b.pickupLocation} ({b.rentalDays} j)</p>
                     </td>
-
-                    {/* Price */}
-                    <td className="px-5 py-4 font-bold text-slate-900 dark:text-white">
-                      {(b.totalPrice || 0).toLocaleString("fr-FR")} TND
-                      {b.depositAmount > 0 && (
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">
-                          Caution: {(b.depositAmount || 0).toLocaleString("fr-FR")} TND
-                        </p>
-                      )}
-                    </td>
-
-                    {/* Payment Status */}
-                    <td className="px-5 py-4">
-                      {b.paymentStatus === "paid" && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30">
-                          {lang === "fr" ? "Payé" : "Paid"}
-                        </span>
-                      )}
-                      {b.paymentStatus === "unpaid" && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/20 text-orange-600 dark:text-orange-300 border border-orange-500/30">
-                          {lang === "fr" ? "À l'arrivée" : "On Arrival"}
-                        </span>
-                      )}
-                      {b.paymentStatus === "partial" && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-600 dark:text-amber-300 border border-amber-500/30">
-                          {lang === "fr" ? "Acompte" : "Partial"}
-                        </span>
-                      )}
-                      {b.paymentStatus === "refunded" && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-700/50 text-slate-300 border border-slate-600/30">
-                          {lang === "fr" ? "Remboursé" : "Refunded"}
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Booking Status Dropdown */}
-                    <td className="px-5 py-4">
-                      <select
-                        value={b.status}
-                        onChange={(e) =>
-                          handleStatusChange(bookingId, e.target.value as BookingDisplayItem["status"])
-                        }
-                        className={`text-[11px] font-bold rounded-lg px-2.5 py-1.5 focus:outline-none border cursor-pointer transition-colors ${
-                          b.status === "active"
-                            ? "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-600/40"
-                            : b.status === "confirmed"
-                            ? "bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-600/40"
-                            : b.status === "pending"
-                            ? "bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-600/40"
-                            : b.status === "completed"
-                            ? "bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700"
-                            : "bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border-red-300 dark:border-red-600/40"
-                        }`}
-                      >
-                        <option value="pending">{lang === "fr" ? "En Attente" : "Pending"}</option>
-                        <option value="confirmed">{lang === "fr" ? "Confirmée" : "Confirmed"}</option>
-                        <option value="active">{lang === "fr" ? "Active (En cours)" : "Active"}</option>
-                        <option value="completed">{lang === "fr" ? "Clôturée" : "Completed"}</option>
-                        <option value="cancelled">{lang === "fr" ? "Annulée" : "Cancelled"}</option>
-                      </select>
-                    </td>
-
-                    {/* Actions Menu Dropdown */}
-                    <td className="px-5 py-4 text-right">
-                      <div className="relative inline-block text-left">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActionMenuOpenId(isMenuOpen ? null : bookingId);
-                          }}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow-xs cursor-pointer ${
-                            isMenuOpen
-                              ? "bg-blue-600 text-white border-blue-600"
-                              : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
-                          }`}
+                    <td className="px-4 py-3 font-bold text-slate-900 dark:text-white whitespace-nowrap">{(b.totalPrice || 0).toLocaleString("fr-FR")} TND</td>
+                    <td className="px-4 py-3"><StatusBadge status={b.paymentStatus} kind="payment" /></td>
+                    <td className="px-4 py-3">
+                      {can("bookings.edit") ? (
+                        <select
+                          value={b.status}
+                          aria-label={`Statut de ${bookingRef}`}
+                          onChange={(e) => handleStatusChange(bookingId, e.target.value as BookingDisplayItem["status"])}
+                          className="text-[11px] font-bold rounded-lg px-2 py-1.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 cursor-pointer"
                         >
-                          <span>Options</span>
-                          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isMenuOpen ? "rotate-180" : ""}`} />
-                        </button>
-
-                        {isMenuOpen && (
-                          <>
-                            {/* Backdrop to close when clicking outside */}
-                            <div
-                              className="fixed inset-0 z-30"
-                              onClick={() => setActionMenuOpenId(null)}
-                            />
-
-                            {/* Dropdown Menu Popup */}
-                            <div className="absolute right-0 mt-1 w-64 rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl py-1.5 z-40 text-xs text-left animate-in fade-in zoom-in-95">
-                              {/* 1. View / Manage Details */}
-                              <Link
-                                href={`/admin/bookings/${bookingId}`}
-                                onClick={() => setActionMenuOpenId(null)}
-                                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-600 transition-colors cursor-pointer font-medium"
-                              >
-                                <Eye className="w-4 h-4 text-blue-600 shrink-0" />
-                                <span>Voir & Gérer la réservation</span>
-                              </Link>
-
-                              {/* 2. Official B&W PDF Invoice */}
-                              <a
-                                href={`/api/bookings/pdf?ref=${bookingRef}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={() => setActionMenuOpenId(null)}
-                                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer font-medium"
-                              >
-                                <FileText className="w-4 h-4 text-slate-700 dark:text-slate-300 shrink-0" />
-                                <span>Facture Officielle PDF (N&B)</span>
-                              </a>
-
-                              {/* 3. Official Voucher Modal */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedBooking(b);
-                                  setShowVoucherModal(true);
-                                  setActionMenuOpenId(null);
-                                }}
-                                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer font-medium"
-                              >
-                                <Printer className="w-4 h-4 text-indigo-600 shrink-0" />
-                                <span>Bon de Réservation (Voucher)</span>
-                              </button>
-
-                              {/* 4. Resend Confirmation Email */}
-                              <button
-                                type="button"
-                                onClick={() => handleResendEmail(bookingRef)}
-                                disabled={sendingEmailForRef === bookingRef}
-                                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer font-medium disabled:opacity-50"
-                              >
-                                {sendingEmailForRef === bookingRef ? (
-                                  <Loader2 className="w-4 h-4 text-emerald-600 animate-spin shrink-0" />
-                                ) : (
-                                  <Mail className="w-4 h-4 text-emerald-600 shrink-0" />
-                                )}
-                                <span>
-                                  {sendingEmailForRef === bookingRef ? "Envoi en cours..." : "Renvoyer Email Confirmation"}
-                                </span>
-                              </button>
-
-                              {/* 5. Contact / Confirm via WhatsApp */}
-                              {waUrl ? (
-                                <a
-                                  href={waUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  onClick={() => setActionMenuOpenId(null)}
-                                  className="w-full flex items-center gap-2.5 px-3.5 py-2 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors cursor-pointer font-bold"
-                                >
-                                  <MessageCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-                                  <span>Envoyer Confirmation WhatsApp (1-Clic)</span>
-                                </a>
-                              ) : null}
-
-                              {/* Divider */}
-                              <div className="border-t border-slate-200 dark:border-slate-800 my-1.5" />
-
-                              {/* Quick Status Sub-actions */}
-                              <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                                Statut Rapide
-                              </div>
-                              <div className="grid grid-cols-2 gap-1 px-2 pb-1">
-                                <button
-                                  type="button"
-                                  onClick={() => handleStatusChange(bookingId, "confirmed")}
-                                  className="px-2 py-1 text-[10px] font-bold rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 text-center"
-                                >
-                                  Confirmée
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleStatusChange(bookingId, "active")}
-                                  className="px-2 py-1 text-[10px] font-bold rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 text-center"
-                                >
-                                  En cours
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleStatusChange(bookingId, "completed")}
-                                  className="px-2 py-1 text-[10px] font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 text-center"
-                                >
-                                  Clôturée
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleStatusChange(bookingId, "cancelled")}
-                                  className="px-2 py-1 text-[10px] font-bold rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300 text-center"
-                                >
-                                  Annulée
-                                </button>
-                              </div>
-
-                              {/* Divider */}
-                              <div className="border-t border-slate-200 dark:border-slate-800 my-1.5" />
-
-                              {/* 6. Delete Reservation (Red Action) */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setBookingToDelete(b);
-                                  setActionMenuOpenId(null);
-                                }}
-                                className="w-full flex items-center gap-2.5 px-3.5 py-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors cursor-pointer font-bold"
-                              >
-                                <Trash2 className="w-4 h-4 text-red-600 shrink-0" />
-                                <span>Supprimer la réservation</span>
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
+                          <option value="pending">{lang === "fr" ? "En attente" : "Pending"}</option>
+                          <option value="confirmed">{lang === "fr" ? "Confirmée" : "Confirmed"}</option>
+                          <option value="active">{lang === "fr" ? "En cours" : "Active"}</option>
+                          <option value="completed">{lang === "fr" ? "Clôturée" : "Completed"}</option>
+                          {can("bookings.cancel") && <option value="cancelled">{lang === "fr" ? "Annulée" : "Cancelled"}</option>}
+                        </select>
+                      ) : (
+                        <StatusBadge status={b.status} />
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <ActionMenu items={actionsFor(b)} label={`Actions pour ${bookingRef}`} size="sm" />
                     </td>
                   </tr>
                 );
@@ -610,7 +506,31 @@ export default function AdminBookingsPage() {
             </tbody>
           </table>
         </div>
-      </div>
+      )}
+
+      <BookingQuickView
+        booking={
+          viewing
+            ? {
+                _id: viewing._id || viewing.id,
+                reference: viewing.reference,
+                status: viewing.status,
+                paymentStatus: viewing.paymentStatus,
+                customerName: viewing.customerName,
+                customerPhone: viewing.customerPhone,
+                customerEmail: viewing.customerEmail,
+                vehicleName: viewing.vehicleName,
+                licensePlate: viewing.licensePlate,
+                pickupDate: viewing.pickupDate,
+                returnDate: viewing.returnDate,
+                pickupLocation: viewing.pickupLocation,
+                returnLocation: viewing.returnLocation,
+                totalAmount: viewing.totalAmount,
+              }
+            : null
+        }
+        onClose={() => setViewing(null)}
+      />
 
       {/* MODAL: DELETE RESERVATION CONFIRMATION */}
       {bookingToDelete && (

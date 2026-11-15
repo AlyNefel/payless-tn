@@ -4,6 +4,7 @@ import React, { useRef } from "react";
 import { motion, useScroll, useTransform } from "framer-motion";
 import { useLocale, useTranslations } from "next-intl";
 import Link from "next/link";
+import Image from "next/image";
 import {
   ShieldCheck,
   Headphones,
@@ -68,11 +69,15 @@ export function Hero() {
         className="absolute inset-0 z-0"
         style={{ y: bgY, scale: bgScale }}
       >
-        <div
-          className="w-full h-full bg-cover bg-center bg-no-repeat"
-          style={{
-            backgroundImage: `url('https://images.unsplash.com/photo-1617788138017-80ad40651399?q=80&w=2070&auto=format&fit=crop')`,
-          }}
+        {/* LCP image: optimised, responsive (AVIF/WebP) and preloaded instead of a 2070px CSS background */}
+        <Image
+          src="https://images.unsplash.com/photo-1617788138017-80ad40651399?auto=format&fit=crop&w=2070&q=75"
+          alt=""
+          fill
+          priority
+          fetchPriority="high"
+          sizes="100vw"
+          className="object-cover object-center"
         />
       </motion.div>
       {/* Multilayer gradient overlay with parallax opacity */}

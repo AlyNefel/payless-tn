@@ -7,8 +7,10 @@ import { getPublicSettings } from "@/lib/publicSettings";
 import { pageMetadata } from "@/lib/seo";
 import { Hero } from "@/components/home/Hero";
 import { BookingSearchBox } from "@/components/home/BookingSearchBox";
-import { FeaturedFleet } from "@/components/home/FeaturedFleet";
-import { WhyChooseUs } from "@/components/home/WhyChooseUs";
+import { WhyPayless } from "@/components/home/WhyPayless";
+import { PremiumExperience } from "@/components/home/PremiumExperience";
+import { TrustSection } from "@/components/home/TrustSection";
+import { getTrustStats } from "@/lib/trustStats";
 import { RentalSteps } from "@/components/home/RentalSteps";
 import { PromotionsBanner } from "@/components/home/PromotionsBanner";
 import { Testimonials } from "@/components/home/Testimonials";
@@ -29,7 +31,7 @@ export default async function HomePage({
   setRequestLocale(locale);
 
   // FAQPage structured data mirrors the visible FAQ answers (same text substitutions).
-  const settings = await getPublicSettings();
+  const [settings, trustStats] = await Promise.all([getPublicSettings(), getTrustStats()]);
   const agencyName = String(settings.agencyName || "Payless Car Rental Tunisie");
   const whatsapp = String(settings.whatsapp || settings.phone || "");
   const l = (["fr", "en", "ar"].includes(locale) ? locale : "fr") as "fr" | "en" | "ar";
@@ -56,22 +58,25 @@ export default async function HomePage({
       {/* 2. Glassmorphic Booking Search Box docked on Hero */}
       <BookingSearchBox />
 
-      {/* 3. Showcase Fleet Grid with Interactive Category Tabs */}
-      <FeaturedFleet />
+      {/* 3. Why Payless — replaces the vehicle grid already available under "Nos Voitures" */}
+      <WhyPayless locale={locale} />
 
-      {/* 4. The PAYLESS Distinction / Why Choose Us Editorial Cards */}
-      <WhyChooseUs />
-
-      {/* 5. 3-Step Seamless Rental Progression */}
+      {/* 4. 3-step rental process */}
       <RentalSteps />
 
-      {/* 6. VIP Seasonal Promotional Banner with One-Click Copy */}
+      {/* 5. Premium experience hero band → "Voir nos véhicules" */}
+      <PremiumExperience locale={locale} />
+
+      {/* 6. Seasonal promotion */}
       <PromotionsBanner />
 
-      {/* 7. Verified Guest Testimonials with Ratings */}
+      {/* 7. Guest testimonials */}
       <Testimonials />
 
-      {/* 8. Comprehensive Expandable FAQ Accordion */}
+      {/* 8. Trust: real figures, commitments, final booking CTA */}
+      <TrustSection locale={locale} stats={trustStats} settings={settings} />
+
+      {/* 9. FAQ */}
       <FAQSection />
     </div>
   );

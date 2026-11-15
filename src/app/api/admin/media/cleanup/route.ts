@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import { Extra, Vehicle } from "@/models";
-import { requireManager } from "@/lib/apiAuth";
-import { deleteImages, listPendingUploads } from "@/lib/cloudinary";
 import { requirePermission } from "@/lib/permissions";
+import { deleteImages, listPendingUploads } from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +33,7 @@ export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const isCron = Boolean(cronSecret) && request.headers.get("authorization") === `Bearer ${cronSecret}`;
   if (!isCron) {
-    const guard = await requirePermission("fleet", "view");
+    const guard = await requirePermission("media", "delete");
     if (!guard.ok) return guard.response;
   }
   try {

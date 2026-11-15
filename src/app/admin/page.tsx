@@ -36,36 +36,24 @@ import {
 } from "recharts";
 import { useAdminLang } from "@/contexts/AdminLangContext";
 import { useEffect, useMemo } from "react";
-import { INITIAL_BOOKINGS, INITIAL_VEHICLES, BookingItem } from "./mockData";
+import type { BookingItem } from "./mockData";
+import { BookingQuickView } from "@/components/admin/BookingQuickView";
 
-const MONTHLY_REVENUE_DATA = [
-  { month: "Jan", revenue: 142000, bookings: 42 },
-  { month: "Fév", revenue: 168000, bookings: 49 },
-  { month: "Mar", revenue: 185000, bookings: 55 },
-  { month: "Avr", revenue: 198000, bookings: 61 },
-  { month: "Mai", revenue: 215000, bookings: 68 },
-  { month: "Juin", revenue: 242000, bookings: 79 },
-  { month: "Juil", revenue: 310000, bookings: 98 },
-  { month: "Août", revenue: 345000, bookings: 112 },
-  { month: "Sept", revenue: 265000, bookings: 84 },
-  { month: "Oct", revenue: 228000, bookings: 73 },
-  { month: "Nov", revenue: 248500, bookings: 81 },
-  { month: "Déc (Est.)", revenue: 290000, bookings: 92 },
-];
 
 export default function AdminDashboardPage() {
   const { lang } = useAdminLang();
-  const [bookings, setBookings] = useState<any[]>(INITIAL_BOOKINGS);
-  const [totalVehicles, setTotalVehicles] = useState(16);
+  // Real data only: an empty agency shows zeros, never sample numbers.
+  const [bookings, setBookings] = useState<any[]>([]);
+  const [fleet, setFleet] = useState<{ total: number; maintenance: number }>({ total: 0, maintenance: 0 });
   const [selectedBooking, setSelectedBooking] = useState<BookingItem | null>(null);
   const [timeRange, setTimeRange] = useState<"year" | "month" | "week">("year");
   const [searchTable, setSearchTable] = useState("");
 
   useEffect(() => {
-    fetch("/api/admin/bookings?limit=50")
+    fetch("/api/admin/bookings?limit=200")
       .then((res) => res.json())
       .then((json) => {
-        if (json.success && Array.isArray(json.bookings) && json.bookings.length > 0) {
+        if (json.success && Array.isArray(json.bookings)) {
           setBookings(
             json.bookings.map((b: any) => ({
               ...b,
@@ -77,12 +65,16 @@ export default function AdminDashboardPage() {
       })
       .catch(() => {});
 
-    fetch("/api/vehicles?limit=50")
-      .then((res) => res.json())
+    fetch("/api/admin/vehicles?limit=200")
+      .then((res) => (res.ok ? res.json() : { vehicles: [] }))
       .then((json) => {
-        if (json.vehicles && json.vehicles.length > 0) {
-          setTotalVehicles(json.vehicles.length);
-        }
+        const units = (json.vehicles || []).flatMap((v: any) =>
+          v.units?.length ? v.units : Array.from({ length: Math.max(1, v.totalUnits || 1) }, () => ({ status: v.status === "maintenance" ? "maintenance" : "active" }))
+        );
+        setFleet({
+          total: units.filter((u: any) => u.status !== "out_of_service").length,
+          maintenance: units.filter((u: any) => u.status === "maintenance").length,
+        });
       })
       .catch(() => {});
   }, []);
@@ -103,72 +95,74 @@ export default function AdminDashboardPage() {
     return bookings.filter((b) => b.status === "pending").length;
   }, [bookings]);
 
-  // Tunisian real departures
-  const upcomingPickups = [
-    {
-      id: "pick-1",
-      customer: "Sami Ben Salem",
-      phone: "+216 22 123 456",
-      vehicle: "Hyundai Tucson 2024",
-      plate: "220-TUN-1023",
-      time: "10:30",
-      location: "Aéroport Tunis-Carthage (Terminal 1)",
-      date: lang === "fr" ? "Aujourd'hui" : "Today",
-    },
-    {
-      id: "pick-2",
-      customer: "Syrine Mabrouk",
-      phone: "+216 98 234 567",
-      vehicle: "Volkswagen Golf 8",
-      plate: "225-TUN-8210",
-      time: "14:00",
-      location: "Sousse Agence Centrale",
-      date: lang === "fr" ? "Aujourd'hui" : "Today",
-    },
-    {
-      id: "pick-3",
-      customer: "Mohamed Trabelsi",
-      phone: "+216 50 345 678",
-      vehicle: "Kia Sportage GT",
-      plate: "230-TUN-3389",
-      time: "09:00",
-      location: "Aéroport Enfidha-Hammamet",
-      date: lang === "fr" ? "Demain" : "Tomorrow",
-    },
-  ];
+  // ── Figures computed from real bookings ─────────────────────────────
+  const stats = useMemo(() => {
+    const live = bookings.filter((b) => !["cancelled", "rejected"].includes(b.status));
+    const now = new Date();
+    const monthKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}`;
+    const thisMonth = monthKey(now);
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const revenueOf = (key: string) =>
+      live.filter((b) => b.pickupDate && monthKey(new Date(b.pickupDate)) === key).reduce((s, b) => s + (b.totalPrice || 0), 0);
+    const monthRevenue = revenueOf(thisMonth);
+    const prevRevenue = revenueOf(monthKey(prev));
+    const trend = prevRevenue > 0 ? Math.round(((monthRevenue - prevRevenue) / prevRevenue) * 1000) / 10 : null;
 
-  const upcomingReturns = [
-    {
-      id: "ret-1",
-      customer: "David Schneider",
-      phone: "+49 170 9988112",
-      vehicle: "Seat Ibiza 2024",
-      plate: "218-TUN-1123",
-      time: "11:15",
-      location: "Aéroport Tunis-Carthage",
-      date: lang === "fr" ? "Aujourd'hui" : "Today",
-    },
-    {
-      id: "ret-2",
-      customer: "Sophie Laurent",
-      phone: "+33 6 98 76 54 32",
-      vehicle: "Hyundai i20",
-      plate: "222-TUN-5512",
-      time: "16:45",
-      location: "Aéroport Djerba-Zarzis",
-      date: lang === "fr" ? "Aujourd'hui" : "Today",
-    },
-    {
-      id: "ret-3",
-      customer: "Ahmed Riahi",
-      phone: "+216 29 456 789",
-      vehicle: "Renault Clio 5",
-      plate: "215-TUN-4589",
-      time: "18:00",
-      location: "Monastir Habib Bourguiba Airport",
-      date: lang === "fr" ? "Demain" : "Tomorrow",
-    },
-  ];
+    const months = Array.from({ length: 12 }, (_, i) => new Date(now.getFullYear(), now.getMonth() - 11 + i, 1));
+    const chart = months.map((m) => {
+      const key = monthKey(m);
+      const inMonth = live.filter((b) => b.pickupDate && monthKey(new Date(b.pickupDate)) === key);
+      return {
+        month: m.toLocaleDateString("fr-FR", { month: "short" }),
+        revenue: inMonth.reduce((s, b) => s + (b.totalPrice || 0), 0),
+        bookings: inMonth.length,
+      };
+    });
+
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dayAfter = new Date(today.getTime() + 2 * 86_400_000);
+    const dayLabel = (iso: string) => {
+      const d = new Date(iso);
+      const sameDay = (x: Date) => d.getFullYear() === x.getFullYear() && d.getMonth() === x.getMonth() && d.getDate() === x.getDate();
+      if (sameDay(today)) return lang === "fr" ? "Aujourd'hui" : "Today";
+      if (sameDay(new Date(today.getTime() + 86_400_000))) return lang === "fr" ? "Demain" : "Tomorrow";
+      return d.toLocaleDateString("fr-FR");
+    };
+    const toItem = (b: any, kind: "pickup" | "return") => ({
+      id: `${kind}-${b._id || b.id}`,
+      booking: b,
+      customer: b.customerName,
+      phone: b.customerPhone,
+      vehicle: b.vehicleName,
+      plate: b.licensePlate || "—",
+      time: (kind === "pickup" ? b.pickupTime : b.returnTime) || "—",
+      location: kind === "pickup" ? b.pickupLocation : b.returnLocation,
+      date: dayLabel(kind === "pickup" ? b.pickupDate : b.returnDate),
+    });
+    const inWindow = (iso?: string) => {
+      if (!iso) return false;
+      const d = new Date(iso);
+      return d >= today && d < dayAfter;
+    };
+    const pickups = live
+      .filter((b) => ["confirmed", "paid", "awaiting_payment", "pending"].includes(b.status) && inWindow(b.pickupDate))
+      .sort((a, b) => String(a.pickupDate).localeCompare(String(b.pickupDate)))
+      .map((b) => toItem(b, "pickup"));
+    const returns = live
+      .filter((b) => b.status === "active" && (inWindow(b.returnDate) || (b.returnDate && new Date(b.returnDate) < today)))
+      .sort((a, b) => String(a.returnDate).localeCompare(String(b.returnDate)))
+      .map((b) => toItem(b, "return"));
+
+    const onRoad = bookings.filter((b) => b.status === "active").length;
+    const rentable = Math.max(0, fleet.total - fleet.maintenance);
+    const utilization = rentable > 0 ? Math.round((onRoad / rentable) * 100) : 0;
+    return { monthRevenue, trend, chart, pickups, returns, onRoad, utilization };
+  }, [bookings, fleet, lang]);
+
+  const upcomingPickups = stats.pickups;
+  const upcomingReturns = stats.returns;
+  const fleetAvailable = Math.max(0, fleet.total - fleet.maintenance - stats.onRoad);
+  const pct = (n: number) => (fleet.total > 0 ? Math.round((n / fleet.total) * 100) : 0);
 
   return (
     <div className="space-y-8">
@@ -252,14 +246,19 @@ export default function AdminDashboardPage() {
           </div>
           <div className="mt-4">
             <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              {totalRevenue > 0 ? totalRevenue.toLocaleString("fr-FR") : "248,500"} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">TND</span>
+              {stats.monthRevenue.toLocaleString("fr-FR")} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">TND</span>
             </div>
             <div className="mt-2 flex items-center gap-1.5 text-xs">
-              <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400 font-semibold">
-                <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-                +14.2%
+              {stats.trend !== null ? (
+                <span className={`inline-flex items-center font-semibold ${stats.trend >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+                  <ArrowUpRight className={`w-3.5 h-3.5 mr-0.5 ${stats.trend < 0 ? "rotate-90" : ""}`} />
+                  {stats.trend > 0 ? "+" : ""}
+                  {stats.trend}%
+                </span>
+              ) : null}
+              <span className="text-slate-500 dark:text-slate-400">
+                {stats.trend !== null ? (lang === "fr" ? "vs mois précédent" : "vs last month") : lang === "fr" ? "ce mois-ci (départs)" : "this month (pickups)"}
               </span>
-              <span className="text-slate-500 dark:text-slate-400">{lang === "fr" ? "vs mois précédent" : "vs last month"}</span>
             </div>
           </div>
         </div>
@@ -276,14 +275,10 @@ export default function AdminDashboardPage() {
           </div>
           <div className="mt-4">
             <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              {activeCount > 0 ? activeCount : 8} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">{lang === "fr" ? "Véhicules" : "Vehicles"}</span>
+              {activeCount} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">{lang === "fr" ? "Véhicules" : "Vehicles"}</span>
             </div>
             <div className="mt-2 flex items-center gap-1.5 text-xs">
-              <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400 font-semibold">
-                <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-                +3
-              </span>
-              <span className="text-slate-500 dark:text-slate-400">{lang === "fr" ? "actuellement sur route" : "on road"}</span>
+              <span className="text-slate-500 dark:text-slate-400">{lang === "fr" ? "actuellement sur la route" : "currently on the road"}</span>
             </div>
           </div>
         </div>
@@ -300,13 +295,13 @@ export default function AdminDashboardPage() {
           </div>
           <div className="mt-4">
             <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              {confirmedCount > 0 ? confirmedCount : bookings.length} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">{lang === "fr" ? "dossiers" : "bookings"}</span>
+              {confirmedCount} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">{lang === "fr" ? "dossiers" : "bookings"}</span>
             </div>
             <div className="mt-2 flex items-center gap-1.5 text-xs">
               <span className="inline-flex items-center text-blue-600 dark:text-blue-400 font-semibold">
                 {pendingCount} {lang === "fr" ? "en attente" : "pending"}
               </span>
-              <span className="text-slate-500 dark:text-slate-400">{lang === "fr" ? "départ cette semaine" : "this week"}</span>
+              <span className="text-slate-500 dark:text-slate-400">{lang === "fr" ? "à traiter" : "to process"}</span>
             </div>
           </div>
         </div>
@@ -323,14 +318,12 @@ export default function AdminDashboardPage() {
           </div>
           <div className="mt-4">
             <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              82% <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">({totalVehicles} {lang === "fr" ? "voitures" : "cars"})</span>
+              {stats.utilization}% <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">({fleet.total} {lang === "fr" ? "voitures" : "cars"})</span>
             </div>
             <div className="mt-2 flex items-center gap-1.5 text-xs">
-              <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400 font-semibold">
-                <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-                +5.4%
+              <span className="text-slate-500 dark:text-slate-400">
+                {stats.onRoad} {lang === "fr" ? "en location aujourd'hui" : "rented today"}
               </span>
-              <span className="text-slate-500 dark:text-slate-400">{lang === "fr" ? "capacité optimale" : "optimal capacity"}</span>
             </div>
           </div>
         </div>
@@ -363,7 +356,7 @@ export default function AdminDashboardPage() {
 
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={MONTHLY_REVENUE_DATA} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <AreaChart data={stats.chart} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.4} />
@@ -425,10 +418,10 @@ export default function AdminDashboardPage() {
                     <span className="w-2 h-2 rounded-full bg-emerald-500" />
                     Disponible en agence
                   </span>
-                  <span className="text-slate-900 dark:text-white font-bold">25 Véhicules (100%)</span>
+                  <span className="text-slate-900 dark:text-white font-bold">{fleetAvailable} ({pct(fleetAvailable)}%)</span>
                 </div>
                 <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: "100%" }} />
+                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${pct(fleetAvailable)}%` }} />
                 </div>
               </div>
 
@@ -439,10 +432,10 @@ export default function AdminDashboardPage() {
                     <span className="w-2 h-2 rounded-full bg-blue-500" />
                     En location (sur route)
                   </span>
-                  <span className="text-slate-900 dark:text-white font-bold">0 Véhicule</span>
+                  <span className="text-slate-900 dark:text-white font-bold">{stats.onRoad} ({pct(stats.onRoad)}%)</span>
                 </div>
                 <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                  <div className="bg-blue-500 h-full rounded-full" style={{ width: "0%" }} />
+                  <div className="bg-blue-500 h-full rounded-full" style={{ width: `${pct(stats.onRoad)}%` }} />
                 </div>
               </div>
 
@@ -453,10 +446,10 @@ export default function AdminDashboardPage() {
                     <span className="w-2 h-2 rounded-full bg-amber-500" />
                     En maintenance / Atelier
                   </span>
-                  <span className="text-slate-900 dark:text-white font-bold">0 Véhicule</span>
+                  <span className="text-slate-900 dark:text-white font-bold">{fleet.maintenance} ({pct(fleet.maintenance)}%)</span>
                 </div>
                 <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full overflow-hidden">
-                  <div className="bg-amber-500 h-full rounded-full" style={{ width: "0%" }} />
+                  <div className="bg-amber-500 h-full rounded-full" style={{ width: `${pct(fleet.maintenance)}%` }} />
                 </div>
               </div>
             </div>
@@ -484,13 +477,21 @@ export default function AdminDashboardPage() {
               <h2 className="text-base font-bold text-slate-900 dark:text-white">Départs & Livraisons Prévus</h2>
             </div>
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-semibold">
-              3 Prévus
+              {upcomingPickups.length} {lang === "fr" ? "prévu(s)" : "planned"}
             </span>
           </div>
 
           <div className="divide-y divide-slate-100 dark:divide-slate-800/70 mt-3">
+            {upcomingPickups.length === 0 && (
+              <p className="py-6 text-center text-xs text-slate-500">{lang === "fr" ? "Aucun départ aujourd'hui ni demain." : "No pickups today or tomorrow."}</p>
+            )}
             {upcomingPickups.map((item) => (
-              <div key={item.id} className="py-3 flex items-start justify-between gap-3">
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => setSelectedBooking(item.booking)}
+                className="w-full text-left py-3 flex items-start justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-900/50 rounded-lg px-1"
+              >
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-slate-900 dark:text-white">{item.customer}</span>
@@ -512,7 +513,7 @@ export default function AdminDashboardPage() {
                   </div>
                   <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium mt-1">{item.date}</p>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -525,13 +526,21 @@ export default function AdminDashboardPage() {
               <h2 className="text-base font-bold text-slate-900 dark:text-white">Retours & Restitutions Prévus</h2>
             </div>
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 font-semibold">
-              3 Prévus
+              {upcomingReturns.length} {lang === "fr" ? "prévu(s)" : "planned"}
             </span>
           </div>
 
           <div className="divide-y divide-slate-100 dark:divide-slate-800/70 mt-3">
+            {upcomingReturns.length === 0 && (
+              <p className="py-6 text-center text-xs text-slate-500">{lang === "fr" ? "Aucun retour prévu aujourd'hui ni demain." : "No returns today or tomorrow."}</p>
+            )}
             {upcomingReturns.map((item) => (
-              <div key={item.id} className="py-3 flex items-start justify-between gap-3">
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => setSelectedBooking(item.booking)}
+                className="w-full text-left py-3 flex items-start justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-900/50 rounded-lg px-1"
+              >
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-slate-900 dark:text-white">{item.customer}</span>
@@ -553,7 +562,7 @@ export default function AdminDashboardPage() {
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium mt-1">{item.date}</p>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -683,74 +692,29 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* QUICK INSPECTION MODAL */}
-      {selectedBooking && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl p-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
-              <div>
-                <span className="font-mono text-xs text-blue-600 dark:text-blue-400 font-bold">
-                  {selectedBooking.reference}
-                </span>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">Détails de la Réservation</h3>
-              </div>
-              <button
-                onClick={() => setSelectedBooking(null)}
-                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white text-xs"
-              >
-                Fermer
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-3 text-xs">
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <p className="text-slate-500 dark:text-slate-400 text-[11px]">Client:</p>
-                <p className="text-sm font-bold text-slate-900 dark:text-white">{selectedBooking.customerName}</p>
-                <p className="text-slate-600 dark:text-slate-400">{selectedBooking.customerEmail} • {selectedBooking.customerPhone}</p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <p className="text-slate-500 dark:text-slate-400 text-[11px]">Véhicule assigné:</p>
-                <p className="text-sm font-bold text-slate-900 dark:text-white">{selectedBooking.vehicleName}</p>
-                <p className="text-slate-600 dark:text-slate-400 font-mono">Immatriculation: {selectedBooking.licensePlate}</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                  <p className="text-slate-500 dark:text-slate-400 text-[11px]">Prise en charge:</p>
-                  <p className="font-semibold text-slate-900 dark:text-white">{selectedBooking.pickupDate}</p>
-                  <p className="text-slate-600 dark:text-slate-400 text-[11px] truncate">{selectedBooking.pickupLocation}</p>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                  <p className="text-slate-500 dark:text-slate-400 text-[11px]">Restitution:</p>
-                  <p className="font-semibold text-slate-900 dark:text-white">{selectedBooking.returnDate}</p>
-                  <p className="text-slate-600 dark:text-slate-400 text-[11px] truncate">{selectedBooking.returnLocation}</p>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/30 flex items-center justify-between">
-                <div>
-                  <p className="text-slate-500 dark:text-slate-400 text-[11px]">Total Règlement:</p>
-                  <p className="text-lg font-bold text-blue-900 dark:text-white">
-                    {selectedBooking.totalPrice.toLocaleString()} TND
-                  </p>
-                </div>
-                <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-500/30">
-                  {selectedBooking.paymentStatus.toUpperCase()} ({selectedBooking.paymentMethod})
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-6 flex items-center justify-end gap-3 pt-3 border-t border-slate-200 dark:border-slate-800">
-              <Link
-                href={`/admin/bookings?search=${selectedBooking.reference}`}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
-              >
-                Gérer le dossier complet &rarr;
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
+      <BookingQuickView
+        booking={
+          selectedBooking
+            ? {
+                _id: (selectedBooking as any)._id || selectedBooking.id,
+                reference: selectedBooking.reference,
+                status: selectedBooking.status,
+                paymentStatus: selectedBooking.paymentStatus,
+                customerName: selectedBooking.customerName,
+                customerPhone: selectedBooking.customerPhone,
+                customerEmail: selectedBooking.customerEmail,
+                vehicleName: selectedBooking.vehicleName,
+                licensePlate: selectedBooking.licensePlate,
+                pickupDate: selectedBooking.pickupDate,
+                returnDate: selectedBooking.returnDate,
+                pickupLocation: selectedBooking.pickupLocation,
+                returnLocation: selectedBooking.returnLocation,
+                totalAmount: (selectedBooking as any).totalAmount,
+              }
+            : null
+        }
+        onClose={() => setSelectedBooking(null)}
+      />
     </div>
   );
 }

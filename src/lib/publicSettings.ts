@@ -32,6 +32,7 @@ export const PUBLIC_SETTING_KEYS = [
   "cancellationHours", "cancellationFeeRate",
   "paymentMethods",
   "openingHours",
+  "googleRating", "googleReviewCount", "googleReviewsUrl",
 ] as const;
 
 export const DEFAULT_PUBLIC_SETTINGS: Record<string, unknown> = {

@@ -28,7 +28,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         const user = await User.findOne({
           email: email.toLowerCase().trim(),
           isActive: true,
-          role: { $in: ["superadmin", "admin", "manager", "staff"] },
+          role: { $exists: true, $nin: ["client", ""] },
         }).select("+password");
 
         if (!user) return null;

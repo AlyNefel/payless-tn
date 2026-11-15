@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireManager } from "@/lib/apiAuth";
+import { requirePermission } from "@/lib/permissions";
 import connectDB from "@/lib/db";
 import { Extra, Vehicle } from "@/models";
 import {
@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
  * referencing it is saved — see markImagesAttached().
  */
 export async function POST(request: NextRequest) {
-  const guard = await requireManager();
+  const guard = await requirePermission("media", "upload");
   if (!guard.ok) return guard.response;
 
   if (!isCloudinaryConfigured()) {
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
  * Only images inside our managed folders can be deleted.
  */
 export async function DELETE(request: NextRequest) {
-  const guard = await requireManager();
+  const guard = await requirePermission("media", "upload");
   if (!guard.ok) return guard.response;
 
   const body = await request.json().catch(() => ({}));
