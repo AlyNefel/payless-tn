@@ -27,6 +27,8 @@ import {
 import { VehicleItem } from "../mockData";
 import { VehicleImageManager, newImageKey, type ManagedImage } from "@/components/admin/VehicleImageManager";
 import { cloudinaryUrl } from "@/lib/cloudinaryUrl";
+import { FleetAccordion } from "@/components/admin/FleetAccordion";
+import { FleetIntegrity } from "@/components/admin/FleetIntegrity";
 import { ActionMenu, QuickView, Field, Section, ViewToggle, btn, standardActions, useViewMode, usePermissions } from "@/components/admin/ui";
 
 interface CategoryOption {
@@ -278,6 +280,7 @@ export default function AdminFleetPage() {
   const [viewMode, setViewMode] = useViewMode("fleet", "grid");
   const { can } = usePermissions();
   const [viewingCar, setViewingCar] = useState<FleetVehicle | null>(null);
+  const [fleetRefresh, setFleetRefresh] = useState(0);
   /** "View & Edit": the editor also shows the vehicle summary (plates, status, agency). */
   const [editSummary, setEditSummary] = useState<FleetVehicle | null>(null);
   const [savingVehicle, setSavingVehicle] = useState(false);
@@ -376,10 +379,12 @@ export default function AdminFleetPage() {
   }, []);
 
   // Stats
-  const totalCount = vehicles.length;
-  const availableCount = vehicles.filter((v) => v.status === "available").length;
-  const rentedCount = vehicles.filter((v) => v.status === "rented").length;
-  const maintenanceCount = vehicles.filter((v) => v.status === "maintenance").length;
+  // Counted on physical cars (reported by the accordion), not on models.
+  const [carStats, setCarStats] = useState<{ total: number; free: number; rented: number; garage: number } | null>(null);
+  const totalCount = carStats ? carStats.total : "—";
+  const availableCount = carStats ? carStats.free : "—";
+  const rentedCount = carStats ? carStats.rented : "—";
+  const maintenanceCount = carStats ? carStats.garage : "—";
 
   // Filter
   const filteredVehicles = vehicles.filter((v) => {
@@ -666,7 +671,7 @@ export default function AdminFleetPage() {
             label: "Total Flotte",
             value: totalCount,
             color: "text-slate-900 dark:text-white",
-            badge: "100% Parc",
+            badge: `${vehicles.length} modèles`,
             badgeColor: "text-blue-500",
           },
           {
@@ -758,207 +763,28 @@ export default function AdminFleetPage() {
         </div>
       </div>
 
-      {/* VEHICLES DISPLAY */}
-      {viewMode === "grid" ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {filteredVehicles.map((car) => (
-            <div
-              key={car.id}
-              className="rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm flex flex-col justify-between group hover:border-slate-300 dark:hover:border-slate-700 transition-all"
-            >
-              <div>
-                <div className="relative h-44 w-full bg-slate-100 dark:bg-slate-900 overflow-hidden">
-                  {car.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- remote legacy hosts + Cloudinary transforms
-                    <img
-                      src={cloudinaryUrl(car.imageUrl, { width: 640, height: 352, crop: "fill", gravity: "auto" })}
-                      alt={`${car.brand} ${car.model}`}
-                      loading="lazy"
-                      decoding="async"
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-slate-400 text-xs gap-1.5">
-                      <ImageIcon className="w-5 h-5" /> Aucune photo
-                    </div>
-                  )}
-                  <span className="absolute bottom-2 right-3 px-1.5 py-0.5 rounded bg-black/60 text-white text-[10px] font-semibold">
-                    {car.images.length} photo{car.images.length > 1 ? "s" : ""}
-                  </span>
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-                  <div className="absolute top-3 right-3">
-                    {car.status === "available" && (
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/90 text-white backdrop-blur-md shadow-md">
-                        Disponible
-                      </span>
-                    )}
-                    {car.status === "rented" && (
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-600/90 text-white backdrop-blur-md shadow-md">
-                        En Location
-                      </span>
-                    )}
-                    {car.status === "maintenance" && (
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/90 text-slate-950 backdrop-blur-md shadow-md">
-                        Atelier
-                      </span>
-                    )}
-                  </div>
-                  <div className="absolute top-3 left-3 px-2 py-0.5 rounded bg-black/70 border border-white/20 font-mono text-[11px] text-amber-300 font-bold backdrop-blur-md">
-                    {car.licensePlate}
-                  </div>
-                  <div className="absolute bottom-2 left-3 text-xs font-semibold flex items-center gap-1.5">
-                    <span className="px-2 py-0.5 rounded-md bg-blue-600/30 text-blue-200 border border-blue-500/20 text-[10px] uppercase font-bold backdrop-blur-md">
-                      {car.category}
-                    </span>
-                    {(car.minRentalDays || 1) > 1 && (
-                      <span className="px-2 py-0.5 rounded-md bg-amber-500/90 text-white text-[10px] font-bold backdrop-blur-md shadow-xs">
-                        Min. {car.minRentalDays} j
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="p-4 space-y-3">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                      {car.brand} {car.model}
-                    </h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {car.year} • {car.color}
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 py-2 border-y border-slate-100 dark:border-slate-800/80 text-[11px] text-slate-500 dark:text-slate-400">
-                    <div className="flex items-center gap-1">
-                      <Gauge className="w-3.5 h-3.5 text-blue-500" />
-                      <span className="capitalize">{car.transmission.slice(0, 4)}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Fuel className="w-3.5 h-3.5 text-amber-500" />
-                      <span className="capitalize">{car.fuelType}</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Users className="w-3.5 h-3.5 text-emerald-500" />
-                      <span>{car.seats} pl.</span>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-slate-400 flex items-center gap-1 truncate">
-                    <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
-                    <span>{car.location}</span>
-                  </p>
-                  <div className="flex items-baseline justify-between pt-1">
-                    <div>
-                      <span className="text-lg font-black text-slate-900 dark:text-white">
-                        {car.pricing.daily} TND
-                      </span>
-                      <span className="text-xs text-slate-400"> / jour</span>
-                    </div>
-                    <span className="text-[11px] text-slate-400">
-                      Caution: {car.pricing.deposit} TND
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div className="p-4 pt-3 border-t border-slate-100 dark:border-slate-800/60 flex items-center justify-between gap-2">
-                <button type="button" onClick={() => setViewingCar(car)} className={`${btn.base} ${btn.secondary}`}>
-                  Voir
-                </button>
-                <div className="flex items-center gap-1">
-                  {can("fleet.edit") && (
-                    <button type="button" onClick={() => openEditModal(car)} className={`${btn.base} ${btn.primary}`}>
-                      Modifier
-                    </button>
-                  )}
-                  <ActionMenu items={fleetActions(car)} label={`Actions pour ${car.brand} ${car.model}`} />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        /* TABLE VIEW */
-        <div className="rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-600 dark:text-slate-300">
-              <thead className="bg-slate-50 dark:bg-slate-900/80 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800">
-                <tr>
-                  <th className="px-5 py-3 font-semibold">Véhicule</th>
-                  <th className="px-5 py-3 font-semibold">Immatriculation</th>
-                  <th className="px-5 py-3 font-semibold">Catégorie</th>
-                  <th className="px-5 py-3 font-semibold">Boîte / Carburant</th>
-                  <th className="px-5 py-3 font-semibold">Tarif / Jour</th>
-                  <th className="px-5 py-3 font-semibold">Statut</th>
-                  <th className="px-5 py-3 font-semibold text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {filteredVehicles.map((car) => (
-                  <tr
-                    key={car.id}
-                    className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors"
-                  >
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-3">
-                        {/* eslint-disable-next-line @next/next/no-img-element -- small admin thumbnail */}
-                        <img
-                          src={car.imageUrl ? cloudinaryUrl(car.imageUrl, { width: 96, height: 72, crop: "fill" }) : undefined}
-                          alt=""
-                          loading="lazy"
-                          className="w-12 h-9 rounded-lg object-cover bg-slate-100 dark:bg-slate-900 shrink-0"
-                        />
-                        <div>
-                          <button type="button" onClick={() => setViewingCar(car)} className="font-bold text-slate-900 dark:text-white hover:text-blue-600 text-left">
-                            {car.brand} {car.model}
-                          </button>
-                          <p className="text-[11px] text-slate-400">
-                            {car.year} • {car.color}
-                          </p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5 font-mono font-medium text-amber-500 dark:text-amber-300">
-                      {car.licensePlate}
-                      {car.units.length > 1 && <span className="block font-sans text-[10px] text-slate-400">+{car.units.length - 1} autre(s)</span>}
-                    </td>
-                    <td className="px-5 py-3.5 text-slate-600 dark:text-slate-300">
-                      {car.category}
-                    </td>
-                    <td className="px-5 py-3.5 capitalize text-slate-600 dark:text-slate-300">
-                      {car.transmission} / {car.fuelType}
-                    </td>
-                    <td className="px-5 py-3.5 font-bold text-slate-900 dark:text-white">
-                      <div>{car.pricing.daily} TND</div>
-                      {(car.minRentalDays || 1) > 1 && (
-                        <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 block">
-                          Min. {car.minRentalDays} j
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      {car.status === "available" && (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-500/30">
-                          Disponible
-                        </span>
-                      )}
-                      {car.status === "rented" && (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30">
-                          En Location
-                        </span>
-                      )}
-                      {car.status === "maintenance" && (
-                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-500/30">
-                          Atelier
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <ActionMenu items={fleetActions(car)} label={`Actions pour ${car.brand} ${car.model}`} size="sm" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      {/* FLEET: accordions by brand + model, physical cars inside (cards or table) */}
+      <FleetAccordion
+        onStats={setCarStats}
+        view={viewMode}
+        search={search}
+        visibleModelIds={new Set(filteredVehicles.map((v) => v.id))}
+        refreshKey={fleetRefresh}
+        onViewModel={(id) => {
+          const car = vehicles.find((v) => v.id === id);
+          if (car) setViewingCar(car);
+        }}
+        onEditModel={(id) => {
+          const car = vehicles.find((v) => v.id === id);
+          if (car) {
+            setEditSummary(car);
+            openEditModal(car);
+          }
+        }}
+        onArchiveModel={(id) => handleArchive(id)}
+      />
+
+      <FleetIntegrity onRepaired={() => setFleetRefresh((n) => n + 1)} />
 
       <QuickView
         open={Boolean(viewingCar)}

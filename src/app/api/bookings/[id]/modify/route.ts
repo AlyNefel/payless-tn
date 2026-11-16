@@ -7,6 +7,8 @@ import { computeRentalDays, extraLineTotal, onlySelected } from "@/lib/extras";
 import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
 import { notifyStaff } from "@/lib/notify";
 import { revalidateAssignments } from "@/lib/fleetUnits";
+import { getVehicleStockAvailability } from "@/lib/availability";
+import { modelsOfBooking } from "@/lib/bookingOverlap";
 import mongoose from "mongoose";
 import { BOOKING_ACCESS_DENIED, canAccessBooking } from "@/lib/bookingAccess";
 import { escapeHtml } from "@/lib/apiAuth";
@@ -88,6 +90,24 @@ export async function POST(
         { success: false, error: "La date de retour doit être postérieure à la date de départ." },
         { status: 400 }
       );
+    }
+
+    // New dates must be really available (the booking's own cars are excluded from the count).
+    const datesChanged =
+      newPickupDate.getTime() !== new Date(booking.pickupDate).getTime() ||
+      newReturnDate.getTime() !== new Date(booking.returnDate).getTime();
+    if (datesChanged) {
+      const wanted = new Map<string, number>();
+      for (const mId of modelsOfBooking(booking as never)) wanted.set(mId, (wanted.get(mId) || 0) + 1);
+      for (const [mId, count] of wanted) {
+        const stock = await getVehicleStockAvailability(mId, newPickupDate, newReturnDate, String(booking._id));
+        if (stock.availableUnits < count) {
+          return NextResponse.json(
+            { success: false, error: "Le véhicule n'est pas disponible pour ces nouvelles dates. Merci de choisir une autre période." },
+            { status: 409 }
+          );
+        }
+      }
     }
 
 

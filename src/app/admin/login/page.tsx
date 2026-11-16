@@ -38,8 +38,15 @@ export default function AdminLoginPage() {
       if (res?.error) {
         setErrorMessage("Identifiants invalides. Veuillez vérifier l'adresse email et le mot de passe.");
       } else {
-        // The dashboard is always the first screen after sign-in.
-        router.push("/admin");
+        // Dashboard first — except Worker Assistance accounts, who land on their simplified workspace.
+        let home = "/admin";
+        try {
+          const me = await fetch("/api/admin/me", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null));
+          if (me?.user?.role === "worker") home = "/admin/worker";
+        } catch {
+          /* keep the dashboard */
+        }
+        router.push(home);
         router.refresh();
       }
     } catch {

@@ -119,6 +119,9 @@ export interface IBooking extends Document {
   returnRecordedAt?: Date;
   pickupMileage?: number;
   returnMileage?: number;
+  /** Who recorded the return, and their comments. */
+  returnRecordedBy?: string;
+  returnNotes?: string;
   extensions?: { previousReturnDate: Date; newReturnDate: Date; extraDays: number; dailyRate: number; amount: number; at: Date; by?: string }[];
   cancellationReason?: string;
   rejectionReason?: string;
@@ -281,6 +284,8 @@ const BookingSchema = new Schema<IBooking>(
     returnRecordedAt: Date,
     pickupMileage: Number,
     returnMileage: Number,
+    returnRecordedBy: String,
+    returnNotes: String,
     extensions: [
       {
         previousReturnDate: Date,

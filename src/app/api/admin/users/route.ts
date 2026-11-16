@@ -4,6 +4,7 @@ import { z } from "zod";
 import connectDB from "@/lib/db";
 import User from "@/models/User";
 import { SUPERADMIN_KEY, getRoles, requirePermission } from "@/lib/permissions";
+import { invalidateAccount } from "@/lib/apiAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,13 @@ async function checkRole(role: string, actorRole: string): Promise<string | null
   const roles = await getRoles();
   if (!roles.has(role)) return "Rôle inconnu.";
   if (role === SUPERADMIN_KEY && actorRole !== SUPERADMIN_KEY) return "Seul le super admin peut attribuer ce rôle.";
+  // No privilege escalation: you can only hand out a role whose permissions you hold yourself.
+  if (actorRole !== SUPERADMIN_KEY) {
+    const mine = new Set(roles.get(actorRole)?.permissions || []);
+    if ((roles.get(role)?.permissions || []).some((p) => !mine.has(p))) {
+      return "Vous ne pouvez pas attribuer un rôle plus étendu que le vôtre.";
+    }
+  }
   return null;
 }
 
@@ -84,6 +92,10 @@ export async function PATCH(request: NextRequest) {
   if (user.role === SUPERADMIN_KEY && guard.role !== SUPERADMIN_KEY) {
     return NextResponse.json({ success: false, error: "Seul un super admin peut modifier un super admin." }, { status: 403 });
   }
+  {
+    const targetErr = await checkRole(user.role, guard.role);
+    if (targetErr) return NextResponse.json({ success: false, error: "Vous ne pouvez pas modifier un compte dont le rôle dépasse le vôtre." }, { status: 403 });
+  }
   if (rest.role) {
     const roleErr = await checkRole(rest.role, guard.role);
     if (roleErr) return NextResponse.json({ success: false, error: roleErr }, { status: 403 });
@@ -105,6 +117,7 @@ export async function PATCH(request: NextRequest) {
   Object.assign(user, rest);
   if (password) user.password = password; // hashed by the pre-save hook
   await user.save();
+  invalidateAccount(String(user._id));
   return NextResponse.json({ success: true });
 }
 
@@ -119,11 +132,15 @@ export async function DELETE(request: NextRequest) {
   if (String(user._id) === guard.session.user?.id) {
     return NextResponse.json({ success: false, error: "Vous ne pouvez pas supprimer votre propre compte." }, { status: 409 });
   }
+  if (user.role !== SUPERADMIN_KEY && (await checkRole(user.role, guard.role))) {
+    return NextResponse.json({ success: false, error: "Vous ne pouvez pas supprimer un compte dont le rôle dépasse le vôtre." }, { status: 403 });
+  }
   if (user.role === SUPERADMIN_KEY) {
     if (guard.role !== SUPERADMIN_KEY) return NextResponse.json({ success: false, error: "Action réservée au super admin." }, { status: 403 });
     const others = await User.countDocuments({ role: SUPERADMIN_KEY, isActive: true, _id: { $ne: user._id } });
     if (others === 0) return NextResponse.json({ success: false, error: "Il doit rester au moins un super admin actif." }, { status: 409 });
   }
   await User.deleteOne({ _id: user._id });
+  invalidateAccount(String(user._id));
   return NextResponse.json({ success: true });
 }

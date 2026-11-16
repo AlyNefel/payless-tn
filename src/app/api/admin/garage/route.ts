@@ -4,8 +4,8 @@ import { z } from "zod";
 import connectDB from "@/lib/db";
 import { Vehicle, MaintenanceRecord, Notification } from "@/models";
 import { requireStaff } from "@/lib/apiAuth";
-import { ensureAllUnits } from "@/lib/fleetUnits";
-import { getAlertSettings, runFleetAlerts } from "@/lib/notify";
+import { ensureAllUnits, reassignBookingsOfUnit } from "@/lib/fleetUnits";
+import { getAlertSettings, notifyStaff, runFleetAlerts } from "@/lib/notify";
 import { requirePermission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
@@ -327,6 +327,23 @@ export async function PATCH(request: NextRequest) {
 
     vehicle.markModified("units");
     await vehicle.save();
+    // A car that left the rentable fleet must not keep future reservations: move them to another car.
+    if (unit.status !== "active") {
+      const moved = await reassignBookingsOfUnit(a.unitId);
+      if (moved.unassigned.length) {
+        await notifyStaff({
+          type: "assignment_conflict",
+          severity: "critical",
+          title: { fr: "Réservations sans véhicule", en: "Bookings without a car", ar: "حجوزات بدون سيارة" },
+          message: {
+            fr: `${unit.licensePlate || "Un véhicule"} est indisponible et aucun autre véhicule n'est libre pour : ${moved.unassigned.join(", ")}.`,
+            en: `No replacement car available for: ${moved.unassigned.join(", ")}.`,
+            ar: moved.unassigned.join(", "),
+          },
+          link: "/admin/bookings",
+        });
+      }
+    }
     // Re-evaluate alerts right away so the bell reflects the change.
     runFleetAlerts({ force: true }).catch(() => {});
     return NextResponse.json({ success: true });

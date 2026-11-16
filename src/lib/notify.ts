@@ -2,6 +2,7 @@ import connectDB from "./db";
 import Notification from "@/models/Notification";
 import Vehicle from "@/models/Vehicle";
 import Booking from "@/models/Booking";
+import InsurancePolicy from "@/models/InsurancePolicy";
 import AgencySetting from "@/models/AgencySetting";
 import { ensureAllUnits } from "./fleetUnits";
 
@@ -173,6 +174,14 @@ async function doRunFleetAlerts(): Promise<number> {
     .select("brand model units")
     .lean();
 
+  // Current insurance policy (latest, not renewed, not cancelled) of each car.
+  const policies = await InsurancePolicy.find({ cancelled: { $ne: true }, renewedBy: { $exists: false } })
+    .select("unitId endDate")
+    .sort({ endDate: -1 })
+    .lean();
+  const policyEnd = new Map<string, Date>();
+  for (const p of policies) if (!policyEnd.has(String(p.unitId))) policyEnd.set(String(p.unitId), p.endDate);
+
   for (const v of vehicles) {
     const name = `${v.brand} ${v.model}`;
     for (const [i, u] of (v.units || []).entries()) {
@@ -259,29 +268,33 @@ async function doRunFleetAlerts(): Promise<number> {
         }
       }
 
-      // ── Assurance
-      if (settings.enabled.insurance && u.insuranceExpiryDate) {
-        const due = new Date(u.insuranceExpiryDate);
+      // ── Assurance: 90 / 60 / 30 days before the end of the current policy, then "expired"
+      const insuranceEnd = policyEnd.get(uid) || u.insuranceExpiryDate;
+      if (settings.enabled.insurance && insuranceEnd) {
+        const due = new Date(insuranceEnd);
         const days = Math.ceil((due.getTime() - now.getTime()) / DAY);
-        if (days <= settings.insuranceDaysThreshold) {
-          const expired = days < 0;
+        const expired = days < 0;
+        const step = expired ? "expired" : [30, 60, 90].find((t) => days <= t);
+        if (step !== undefined) {
           created += Number(
             await notifyStaff({
               type: expired ? "insurance_expired" : "insurance_due",
-              severity: expired ? "critical" : "warning",
-              dedupeKey: `insurance:${uid}:${dayKey(due)}:${expired ? "expired" : "soon"}`,
+              severity: expired ? "critical" : step === 90 ? "info" : "warning",
+              dedupeKey: `insurance:${uid}:${dayKey(due)}:${step}`,
               title: {
                 fr: expired ? `Assurance expirée — ${plate}` : `Assurance expire dans ${days} j — ${plate}`,
                 en: expired ? `Insurance expired — ${plate}` : `Insurance expires in ${days} days — ${plate}`,
                 ar: expired ? `انتهى التأمين — ${plate}` : `ينتهي التأمين خلال ${days} يوم — ${plate}`,
               },
               message: {
-                fr: `Assurance de ${name} (${plate}) : échéance le ${fmtDate(due)}.`,
+                fr: expired
+                  ? `L'assurance de ${name} (${plate}) a expiré le ${fmtDate(due)}. Le véhicule ne doit pas circuler.`
+                  : `Assurance de ${name} (${plate}) : échéance le ${fmtDate(due)}. Pensez au renouvellement.`,
                 en: `Insurance of ${name} (${plate}) ends on ${fmtDate(due)}.`,
                 ar: `تأمين ${name} (${plate}) ينتهي في ${fmtDate(due)}.`,
               },
-              link: `/admin/garage?tab=inspection&unit=${uid}`,
-              data: { vehicleId: String(v._id), unitId: uid, licensePlate: plate },
+              link: `/admin/garage?tab=assurance&unit=${uid}`,
+              data: { vehicleId: String(v._id), unitId: uid, licensePlate: plate, daysLeft: days },
             })
           );
         }

@@ -28,7 +28,7 @@ import { sanitizeBookingForClient } from "@/lib/sanitize";
 import { escapeRegex, isStaffRequest } from "@/lib/apiAuth";
 import { canAccessBooking } from "@/lib/bookingAccess";
 import { withExtraIcons } from "@/lib/extrasServer";
-import { autoAssignUnits } from "@/lib/fleetUnits";
+import { releaseBooking, syncBookingAssignment } from "@/lib/fleetUnits";
 import { effectiveMinDays, getGlobalMinRentalDays } from "@/lib/rentalRules";
 import { notifyStaff } from "@/lib/notify";
 import { z } from "zod";
@@ -659,29 +659,29 @@ export async function POST(request: NextRequest) {
       ],
     });
 
-    // Optimistic concurrency guard: two customers may pass the availability check at the
-    // same time. Re-count after insert and roll back this booking if the stock is exceeded.
-    for (const pv of processedVehicles) {
-      const after = await getVehicleStockAvailability(pv.vehicle._id.toString(), pickupDate, returnDate);
-      if (after.bookedUnits > after.totalUnits) {
+    // Link the booking to ONE unique physical car per booked car (a plate is not required).
+    // The claim is atomic: if every car of the model is already held on one of the days,
+    // the booking is refused instead of sharing a car with another reservation.
+    let assignedPlates = "";
+    try {
+      const sync = await syncBookingAssignment(String(booking._id));
+      if (sync.unassigned > 0) {
         await Booking.deleteOne({ _id: booking._id });
+        await releaseBooking(String(booking._id));
         return NextResponse.json(
-          {
-            success: false,
-            error: `Le véhicule ${pv.vehicle.brand} ${pv.vehicle.model} vient d'être réservé par un autre client pour ces dates.`,
-          },
+          { success: false, error: `Le véhicule ${vehicle.brand} ${vehicle.model} n'est plus disponible pour les dates sélectionnées.` },
           { status: 409 }
         );
       }
-    }
-
-    // Auto-assign a physical car (license plate) of each booked model. The admin can change it later.
-    let assignedPlates = "";
-    try {
-      const assigned = await autoAssignUnits(String(booking._id));
-      assignedPlates = assigned.map((a) => a.licensePlate || "immat. à saisir").join(", ");
+      assignedPlates = sync.assigned.map((a) => a.licensePlate || "sans immat.").join(", ");
     } catch (assignErr) {
-      console.error("Auto unit assignment failed:", assignErr);
+      console.error("Vehicle assignment failed:", assignErr);
+      await Booking.deleteOne({ _id: booking._id });
+      await releaseBooking(String(booking._id));
+      return NextResponse.json(
+        { success: false, error: "L'affectation du véhicule a échoué. Veuillez réessayer." },
+        { status: 500 }
+      );
     }
 
     // Record coupon usage
@@ -772,7 +772,6 @@ export async function POST(request: NextRequest) {
         pickupDate: `${formatDate(pickupDate, "fr-FR")}${validationResult.data.pickupTime ? ` à ${validationResult.data.pickupTime}` : ""}`,
         returnDate: `${formatDate(returnDate, "fr-FR")}${validationResult.data.returnTime ? ` à ${validationResult.data.returnTime}` : ""}`,
         bookingStatus: "confirmed",
-        licensePlates: assignedPlates && !assignedPlates.includes("saisir") ? assignedPlates : undefined,
         rentalDuration: rentalDays,
         dailyRate,
         subtotal,
@@ -872,7 +871,7 @@ export async function POST(request: NextRequest) {
       `🚗 *Payless Car Rental Tunisie — Confirmation de Réservation*\n\n` +
       `Bonjour *${customer.firstName} ${customer.lastName}*,\n` +
       `Votre réservation *${bookingReference}* est ✅ *Confirmée Instantanément* !\n\n` +
-      `• *Véhicule* : ${vehicle.brand} ${vehicle.model}${assignedPlates ? ` (${assignedPlates})` : ""}\n` +
+      `• *Véhicule* : ${vehicle.brand} ${vehicle.model}\n` +
       `• *Prise en charge* : ${formatDate(pickupDate, "fr-FR")} (${pickupLocName})\n` +
       `• *Restitution* : ${formatDate(returnDate, "fr-FR")} (${returnLocName})\n` +
       `• *Durée* : ${rentalDays} jour(s)\n` +
@@ -915,7 +914,8 @@ export async function POST(request: NextRequest) {
         message: "Réservation confirmée automatiquement avec succès.",
         bookingReference,
         bookingId: String(booking._id),
-        assignedPlates,
+        // Internal fleet data (plate) only for back-office callers, never for customers.
+        ...(staffCreated ? { assignedPlates } : {}),
         booking: clientSafeBooking,
         whatsappUrl,
         pdfUrl: `/api/bookings/pdf?ref=${bookingReference}&email=${encodeURIComponent(customer.email)}`,

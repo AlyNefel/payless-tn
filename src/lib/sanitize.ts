@@ -35,6 +35,18 @@ export function sanitizeBookingForClient<T extends Record<string, any>>(booking:
 
   // Strip internal administrator notes and sensitive audits
   delete sanitized.internalNotes;
+  // Internal fleet / operations data never leaves the back-office.
+  delete sanitized.assignedUnits;
+  delete sanitized.auditHistory;
+  delete sanitized.pickupMileage;
+  delete sanitized.returnMileage;
+  delete sanitized.extensions;
+  delete sanitized.createdBy;
+  if (Array.isArray(sanitized.vehicles)) {
+    sanitized.vehicles = sanitized.vehicles.map((v: any) =>
+      v && typeof v.vehicleId === "object" && v.vehicleId ? { ...v, vehicleId: sanitizeVehicleForClient(v.vehicleId) } : v
+    );
+  }
 
   // Sanitize nested vehicle if populated
   if (sanitized.vehicleId && typeof sanitized.vehicleId === "object") {

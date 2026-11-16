@@ -251,7 +251,7 @@ export default function AdminBookingsPage() {
       `Bonjour *${b.customerName}*,\n\n` +
       `✅ Votre réservation chez *Payless Car Rental Tunisie* est confirmée.\n\n` +
       `📋 *Référence* : ${bookingRef}\n` +
-      `🚗 *Véhicule* : ${b.vehicleName}${b.licensePlate ? ` (${b.licensePlate})` : ""}\n` +
+      `🚗 *Véhicule* : ${b.vehicleName}\n` +
       `📅 *Période* : du ${b.pickupDate} au ${b.returnDate} (${b.rentalDays} jours)\n` +
       `📍 *Prise en charge* : ${b.pickupLocation}\n` +
       `💰 *Total TTC* : ${(b.totalPrice || 0).toLocaleString("fr-FR")} TND\n\n` +
@@ -705,7 +705,7 @@ export default function AdminBookingsPage() {
                     {selectedBooking.vehicleName}
                   </p>
                   <p className="text-slate-600 font-mono font-bold mt-0.5">
-                    Matricule: {selectedBooking.licensePlate || "TUN-2026"}
+                    Catégorie garantie
                   </p>
                   <p className="text-slate-600">Catégorie: Tourisme & Confort</p>
                   <p className="text-slate-500 text-[11px] mt-2">
@@ -790,10 +790,7 @@ export default function AdminBookingsPage() {
 
               {/* Signatures box */}
               <div className="grid grid-cols-2 gap-8 pt-4 border-t border-slate-200 text-xs">
-                <div>
-                  <p className="font-semibold text-slate-700">Signature du Client:</p>
-                  <div className="h-14 border-b border-dashed border-slate-400 mt-2"></div>
-                </div>
+                <div />
                 <div className="text-right">
                   <p className="font-semibold text-slate-700">Cachet & Signature Agence:</p>
                   {/* eslint-disable-next-line @next/next/no-img-element -- printed voucher, local asset */}

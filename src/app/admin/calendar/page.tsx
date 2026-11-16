@@ -141,16 +141,51 @@ export default function CalendarPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [vehRes, bookRes] = await Promise.all([
-        fetch("/api/vehicles?limit=100").then((r) => r.json()),
-        fetch("/api/admin/bookings?limit=300").then((r) => r.json()),
-      ]);
-
-      if (vehRes.success && Array.isArray(vehRes.vehicles)) {
-        setVehicles(vehRes.vehicles);
-      }
-      if (bookRes.success && Array.isArray(bookRes.bookings)) {
-        setBookings(bookRes.bookings);
+      // One calendar row per PHYSICAL car: a row can never show two reservations on the same days.
+      const res = await fetch("/api/admin/fleet/units?bookings=1", { cache: "no-store" }).then((r) => r.json());
+      if (res.success && Array.isArray(res.models)) {
+        const focusModel = new URLSearchParams(window.location.search).get("model");
+        const rows: VehicleItem[] = [];
+        const events: BookingEvent[] = [];
+        const toEvent = (b: any, rowId: string, name: string, plate: string): BookingEvent => ({
+          id: `${b._id}-${rowId}`,
+          _id: b._id,
+          reference: b.reference,
+          status: b.status,
+          paymentStatus: b.paymentStatus,
+          vehicleId: rowId,
+          vehicleName: name,
+          licensePlate: plate,
+          customerName: b.customerName,
+          customerPhone: b.customerPhone,
+          pickupDate: b.pickupDate,
+          returnDate: b.returnDate,
+          totalAmount: b.totalAmount,
+        });
+        for (const m of res.models) {
+          if (focusModel && m._id !== focusModel) continue;
+          const name = `${m.brand} ${m.model}`;
+          const images = m.image ? [{ url: m.image, isPrimary: true }] : [];
+          for (const u of m.units) {
+            rows.push({
+              _id: u.unitId,
+              brand: m.brand,
+              model: m.model,
+              year: m.year,
+              licensePlate: `#${u.index} · ${u.licensePlate || "sans immat."}${u.status !== "active" ? " · garage" : ""}`,
+              status: u.status,
+              images,
+            });
+            for (const b of u.bookings || []) events.push(toEvent(b, u.unitId, name, u.licensePlate));
+          }
+          if (m.unassigned.length > 0) {
+            const rowId = `${m._id}-unassigned`;
+            rows.push({ _id: rowId, brand: m.brand, model: m.model, year: m.year, licensePlate: "⚠ sans véhicule affecté", images });
+            for (const b of m.unassigned) events.push(toEvent(b, rowId, name, ""));
+          }
+        }
+        setVehicles(rows);
+        setBookings(events);
       }
     } catch (err) {
       console.error("Failed to load calendar data:", err);
@@ -194,7 +229,11 @@ export default function CalendarPage() {
     const monthStart = new Date(year, month, 1);
     const monthEnd = new Date(year, month, daysInMonth, 23, 59, 59);
 
+    const seen = new Set<string>();
     const activeInMonth = bookings.filter((b) => {
+      // A multi-car booking has one bar per car: count it once.
+      if (seen.has(b._id)) return false;
+      seen.add(b._id);
       if (!b.pickupDate || !b.returnDate) return false;
       const p = new Date(b.pickupDate);
       const r = new Date(b.returnDate);
@@ -225,17 +264,8 @@ export default function CalendarPage() {
       // Status filter
       if (statusFilter !== "all" && b.status !== statusFilter) return false;
 
-      // Match vehicle by ID or Brand+Model
-      const matchId =
-        b.vehicleId &&
-        (b.vehicleId === vehicle._id ||
-          (typeof b.vehicleId === "object" && (b.vehicleId as any)._id === vehicle._id));
-      const matchName =
-        b.vehicleName &&
-        b.vehicleName.toLowerCase().includes(vehicle.brand.toLowerCase()) &&
-        b.vehicleName.toLowerCase().includes(vehicle.model.toLowerCase());
-
-      if (!matchId && !matchName) return false;
+      // Strict match on the physical car (no brand/model guess).
+      if (b.vehicleId !== vehicle._id) return false;
 
       if (!b.pickupDate || !b.returnDate) return false;
       const p = new Date(b.pickupDate);
@@ -577,7 +607,7 @@ export default function CalendarPage() {
                           </p>
                           <div className="flex items-center gap-1.5 mt-0.5">
                             <span className="font-mono text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.2 rounded border border-slate-200 dark:border-slate-700">
-                              {v.licensePlate || "TUN-2026"}
+                              {v.licensePlate}
                             </span>
                             {vehicleBookings.length > 0 && (
                               <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400">

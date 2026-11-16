@@ -98,6 +98,9 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => {
+    // /admin/users?role=worker → dedicated "Agents d'assistance" view (filter + default role).
+    const preset = new URLSearchParams(window.location.search).get("role");
+    if (preset) setRoleFilter(preset);
     load();
   }, [load]);
 
@@ -166,7 +169,17 @@ export default function UsersPage() {
       onDelete: String(u._id) !== me?.user?.id ? () => remove(u) : undefined,
       can: { edit: can("users.edit"), delete: can("users.delete") },
       extra: can("users.edit")
-        ? [{ key: "toggle", label: u.isActive ? "Désactiver le compte" : "Activer le compte", onClick: () => toggleActive(u) }]
+        ? [
+            { key: "toggle", label: u.isActive ? "Suspendre le compte" : "Activer le compte", onClick: () => toggleActive(u) },
+            {
+              key: "password",
+              label: "Réinitialiser le mot de passe",
+              onClick: () => {
+                const pwd = prompt(`Nouveau mot de passe pour ${u.name} (8 caractères min.)`);
+                if (pwd) call("/api/admin/users", "PATCH", { id: u._id, password: pwd }, "Mot de passe modifié");
+              },
+            },
+          ]
         : [],
     });
 
@@ -197,7 +210,7 @@ export default function UsersPage() {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-            <Users className="w-6 h-6 text-blue-600" /> Utilisateurs
+            <Users className="w-6 h-6 text-blue-600" /> {roleFilter === "worker" ? "Agents d'assistance" : "Utilisateurs"}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             Comptes du back-office. Les droits de chaque rôle se règlent dans{" "}
@@ -208,8 +221,8 @@ export default function UsersPage() {
           </p>
         </div>
         {can("users.create") && (
-          <button type="button" onClick={() => setForm({ ...EMPTY })} className={`${btn.base} ${btn.primary}`}>
-            <UserPlus className="w-4 h-4" /> Nouvel utilisateur
+          <button type="button" onClick={() => setForm({ ...EMPTY, role: roleFilter !== "all" ? roleFilter : EMPTY.role })} className={`${btn.base} ${btn.primary}`}>
+            <UserPlus className="w-4 h-4" /> {roleFilter === "worker" ? "Nouvel agent" : "Nouvel utilisateur"}
           </button>
         )}
       </div>

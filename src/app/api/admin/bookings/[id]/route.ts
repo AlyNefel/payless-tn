@@ -14,11 +14,15 @@ import { getVehicleStockAvailability } from "@/lib/availability";
 import {
   assignUnitManually,
   autoAssignUnits,
-  ensureUnits,
+  canKeepUnitsUntil,
+  releaseBooking,
+  holdDays,
+  reassignBookingsOfUnit,
+  syncBookingAssignment,
   listUnitAvailability,
-  revalidateAssignments,
 } from "@/lib/fleetUnits";
 import { notifyStaff } from "@/lib/notify";
+import { modelsOfBooking } from "@/lib/bookingOverlap";
 
 async function checkAdmin(level: string = "edit") {
   const guard = await requirePermission("bookings", level);
@@ -133,6 +137,34 @@ export async function PATCH(
     const currentBooking = await Booking.findById(id).populate("vehicleId").populate("customerId");
     if (!currentBooking) return NextResponse.json({ error: "Booking not found" }, { status: 404 });
 
+    // Manual date / model change by the admin: the new window must be really available.
+    {
+      const nextPickup = typeof updates.pickupDate === "string" ? new Date(updates.pickupDate) : null;
+      const nextReturn = typeof updates.returnDate === "string" ? new Date(updates.returnDate) : null;
+      const nextModel = typeof updates.vehicleId === "string" && mongoose.Types.ObjectId.isValid(updates.vehicleId) ? updates.vehicleId : null;
+      if ((nextPickup && Number.isNaN(nextPickup.getTime())) || (nextReturn && Number.isNaN(nextReturn.getTime()))) {
+        return NextResponse.json({ error: "Dates invalides" }, { status: 400 });
+      }
+      const currentModel = String((currentBooking.vehicleId as any)?._id || currentBooking.vehicleId || "");
+      if (nextPickup || nextReturn || (nextModel && nextModel !== currentModel)) {
+        const p0 = nextPickup || currentBooking.pickupDate;
+        const r0 = nextReturn || currentBooking.returnDate;
+        if (r0 <= p0) return NextResponse.json({ error: "Le retour doit être après le départ." }, { status: 400 });
+        const models = nextModel && nextModel !== currentModel ? [nextModel] : modelsOfBooking(currentBooking as never);
+        const wanted = new Map<string, number>();
+        models.forEach((mId) => wanted.set(mId, (wanted.get(mId) || 0) + 1));
+        for (const [mId, count] of wanted) {
+          const stock = await getVehicleStockAvailability(mId, p0, r0, id);
+          if (stock.availableUnits < count) {
+            return NextResponse.json({ error: "Aucun véhicule de ce modèle n'est libre sur cette période." }, { status: 409 });
+          }
+        }
+        if (nextPickup) updates.pickupDate = nextPickup;
+        if (nextReturn) updates.returnDate = nextReturn;
+        if (nextPickup || nextReturn) updates.rentalDuration = computeRentalDays(p0, r0);
+      }
+    }
+
     // Model change: the previously assigned plate belongs to the old model.
     const previousModelId = String((currentBooking.vehicleId as any)?._id || currentBooking.vehicleId || "");
     const modelChanged =
@@ -151,6 +183,20 @@ export async function PATCH(
 
       if (decision === "approve") {
         const mod = currentBooking.modificationRequest;
+        // Approving new dates requires real availability on those dates.
+        if (mod.pickupDate && mod.returnDate) {
+          const wanted = new Map<string, number>();
+          for (const mId of modelsOfBooking(currentBooking as never)) wanted.set(mId, (wanted.get(mId) || 0) + 1);
+          for (const [mId, count] of wanted) {
+            const stock = await getVehicleStockAvailability(mId, new Date(mod.pickupDate), new Date(mod.returnDate), id);
+            if (stock.availableUnits < count) {
+              return NextResponse.json(
+                { error: "Impossible d'accepter : le véhicule n'est pas disponible sur les dates demandées." },
+                { status: 409 }
+              );
+            }
+          }
+        }
         if (mod.pickupDate) updates.pickupDate = mod.pickupDate;
         if (mod.returnDate) updates.returnDate = mod.returnDate;
         if (mod.pickupTime) updates.pickupTime = mod.pickupTime;
@@ -284,11 +330,9 @@ export async function PATCH(
 
     if (!booking) return NextResponse.json({ error: "Booking not found" }, { status: 404 });
 
-    if (updates.pickupDate || updates.returnDate || modelChanged) {
-      await revalidateAssignments(id).catch((e) => console.error("revalidateAssignments:", e));
-    } else if (newStatus && ["confirmed", "awaiting_payment", "paid", "active"].includes(newStatus)) {
-      await autoAssignUnits(id).catch((e) => console.error("autoAssignUnits:", e));
-    }
+    // Every change (dates, model, status) goes through the assignment engine:
+    // cancelled / completed bookings release their car, the others keep or get one unique car.
+    await syncBookingAssignment(id).catch((e) => console.error("syncBookingAssignment:", e));
 
     // Track vehicle available units and trigger emails
     if (newStatus && oldBooking && oldBooking.bookingStatus !== newStatus) {
@@ -375,6 +419,7 @@ export async function DELETE(
     }
 
     await Booking.findByIdAndDelete(id);
+    await releaseBooking(id);
     return NextResponse.json({
       success: true,
       message: `Réservation ${booking.bookingReference || id} supprimée définitivement avec succès.`,
@@ -386,6 +431,15 @@ export async function DELETE(
 }
 
 /* ───────────────────────── Operational actions (counter / garage) ───────────────────────── */
+
+const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+const changeReturn = {
+  newReturnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  newReturnTime: hhmm.optional(),
+  /** Daily price applied to extra days, in TND. Defaults to the model's base daily price. */
+  dailyRateTND: z.number().min(0).max(100000).optional(),
+  notes: z.string().max(1000).optional(),
+};
 
 const actionSchema = z.discriminatedUnion("action", [
   z.object({
@@ -405,15 +459,13 @@ const actionSchema = z.discriminatedUnion("action", [
     mileage: z.number().min(0).max(2_000_000).optional(),
     returnedAt: z.string().optional(),
     notes: z.string().max(1000).optional(),
+    /** State of the car after the return: back in service, or sent to the garage. */
+    unitStatus: z.enum(["active", "maintenance"]).optional(),
   }),
-  z.object({
-    action: z.literal("extend"),
-    newReturnDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    newReturnTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
-    /** Daily price applied to the extra days, in TND. Defaults to the model's base daily price. */
-    dailyRateTND: z.number().min(0).max(100000).optional(),
-    notes: z.string().max(1000).optional(),
-  }),
+  // "extend" kept for older clients; change_return handles both extension and reduction.
+  z.object({ action: z.literal("extend"), ...changeReturn }),
+  z.object({ action: z.literal("change_return"), ...changeReturn }),
+  z.object({ action: z.literal("add_note"), note: z.string().trim().min(1).max(1000) }),
 ]);
 
 async function handleAction(id: string, body: unknown, by: string) {
@@ -448,16 +500,31 @@ async function handleAction(id: string, body: unknown, by: string) {
   const plates = (booking.assignedUnits || []).map((u) => u.licensePlate).filter(Boolean).join(", ");
   const carLabel = `${vehicle?.brand || ""} ${vehicle?.model || ""}${plates ? ` (${plates})` : ""}`.trim();
 
+  if (a.action === "add_note") {
+    const stamp = `[${new Date().toLocaleString("fr-FR")} — ${by}] ${a.note}`;
+    booking.internalNotes = [booking.internalNotes, stamp].filter(Boolean).join("\n").slice(-4000);
+    booking.auditHistory.push({ action: "Note ajoutée", performedBy: by, performedByRole: "staff", timestamp: new Date(), notes: a.note });
+    await booking.save();
+    return NextResponse.json({ success: true, booking });
+  }
+
   if (a.action === "record_pickup") {
     if (!["confirmed", "awaiting_payment", "paid", "pending"].includes(booking.bookingStatus)) {
       return NextResponse.json({ error: "Le départ ne peut être enregistré que sur une réservation confirmée." }, { status: 409 });
     }
-    await autoAssignUnits(id);
+    // A departure needs one unique physical car per booked car (a plate is not required).
+    const sync = await syncBookingAssignment(id);
+    if (sync.unassigned > 0) {
+      return NextResponse.json(
+        { error: "Aucun véhicule physique libre pour ce départ : tous les véhicules de ce modèle sont déjà affectés sur ces dates." },
+        { status: 409 }
+      );
+    }
     booking.bookingStatus = "active";
     booking.pickupRecordedAt = new Date();
     if (a.mileage !== undefined) {
       booking.pickupMileage = a.mileage;
-      await updateUnitMileage(booking, a.mileage);
+      await updateUnitMileage({ assignedUnits: sync.assigned.map((u) => ({ vehicleId: new mongoose.Types.ObjectId(u.vehicleId), unitId: u.unitId ? new mongoose.Types.ObjectId(u.unitId) : undefined })) }, a.mileage);
     }
     booking.auditHistory.push({
       action: "Départ enregistré (véhicule remis au client)",
@@ -475,11 +542,13 @@ async function handleAction(id: string, body: unknown, by: string) {
       return NextResponse.json({ error: "Seule une réservation en cours peut être clôturée par un retour." }, { status: 409 });
     }
     if (a.mileage !== undefined && booking.pickupMileage !== undefined && a.mileage < booking.pickupMileage) {
-      return NextResponse.json({ error: `Kilométrage retour inférieur au départ (${booking.pickupMileage} km).` }, { status: 400 });
+      return NextResponse.json({ error: `Kilométrage retour inférieur au kilométrage de départ (${booking.pickupMileage} km).` }, { status: 400 });
     }
     const returnedAt = a.returnedAt && !Number.isNaN(Date.parse(a.returnedAt)) ? new Date(a.returnedAt) : new Date();
     booking.bookingStatus = "completed";
     booking.returnRecordedAt = returnedAt;
+    booking.returnRecordedBy = by;
+    if (a.notes) booking.returnNotes = a.notes;
     if (a.mileage !== undefined) {
       booking.returnMileage = a.mileage;
       await updateUnitMileage(booking, a.mileage);
@@ -494,13 +563,21 @@ async function handleAction(id: string, body: unknown, by: string) {
       notes: [
         a.mileage !== undefined ? `Kilométrage retour : ${a.mileage} km` : "",
         driven !== undefined ? `Parcourus : ${driven} km` : "",
+        a.unitStatus === "maintenance" ? "Véhicule envoyé au garage" : "",
         a.notes || "",
       ]
         .filter(Boolean)
         .join(" · "),
     });
     await booking.save();
-    if (vehicle?._id) await Vehicle.findByIdAndUpdate(vehicle._id, { $inc: { availableUnits: 1 } }).catch(() => {});
+    await syncBookingAssignment(id); // frees the car for the next customer
+    if (a.unitStatus === "maintenance") {
+      for (const u of booking.assignedUnits || []) {
+        if (!u.unitId) continue;
+        await Vehicle.updateOne({ _id: u.vehicleId, "units._id": u.unitId }, { $set: { "units.$.status": "maintenance" } });
+        await reassignBookingsOfUnit(String(u.unitId));
+      }
+    }
     await notifyStaff({
       type: "return_recorded",
       severity: "success",
@@ -516,54 +593,63 @@ async function handleAction(id: string, body: unknown, by: string) {
     return NextResponse.json({ success: true, booking });
   }
 
-  // ── Extension at the base daily price
-  if (!["active", "confirmed", "paid", "awaiting_payment"].includes(booking.bookingStatus)) {
-    return NextResponse.json({ error: "Seule une réservation en cours ou confirmée peut être prolongée." }, { status: 409 });
+  // ── Change of return date: extension (later) or reduction (earlier) ──────────────
+  if (!["active", "confirmed", "paid", "awaiting_payment", "pending"].includes(booking.bookingStatus)) {
+    return NextResponse.json({ error: "Seule une réservation en cours ou à venir peut être modifiée." }, { status: 409 });
   }
   const previousReturn = new Date(booking.returnDate);
   const [y, m, d] = a.newReturnDate.split("-").map(Number);
   const newReturn = new Date(previousReturn);
   newReturn.setUTCFullYear(y, m - 1, d);
-  if (newReturn <= previousReturn) {
-    return NextResponse.json({ error: "La nouvelle date de retour doit être après la date actuelle." }, { status: 400 });
+  if (holdDays(previousReturn, previousReturn)[0] === a.newReturnDate && !a.newReturnTime) {
+    return NextResponse.json({ error: "La date de retour est identique." }, { status: 400 });
   }
-  const extraDays = computeRentalDays(previousReturn, newReturn);
-
-  // The car must stay free for the extra days (it is physically with the customer).
-  const vehicleId = String(vehicle?._id || booking.vehicleId);
-  const stock = await getVehicleStockAvailability(vehicleId, previousReturn, newReturn, id);
-  if (!stock.isAvailable) {
-    return NextResponse.json({ error: "Aucun véhicule de ce modèle n'est libre pour la prolongation." }, { status: 409 });
-  }
-  const units = await ensureUnits(vehicleId);
-  const myUnitIds = (booking.assignedUnits || []).map((u) => String(u.unitId || ""));
-  const conflicting = await Booking.find({
-    _id: { $ne: booking._id },
-    bookingStatus: { $in: ["pending", "confirmed", "awaiting_payment", "paid", "active"] },
-    pickupDate: { $lt: newReturn },
-    returnDate: { $gt: previousReturn },
-    "assignedUnits.unitId": { $in: myUnitIds.filter((x) => mongoose.Types.ObjectId.isValid(x)).map((x) => new mongoose.Types.ObjectId(x)) },
-  })
-    .select("bookingReference")
-    .lean();
-
-  const baseDaily = a.dailyRateTND !== undefined ? Math.round(a.dailyRateTND * 100) : Number(vehicle?.pricing?.daily || 0);
   const pb = booking.pricingBreakdown;
-  const rentalAmount = baseDaily * extraDays;
-  const perDayExtras = onlySelected(booking.extras)
-    .filter((ex) => isPerDayPricing(ex.pricingType))
-    .reduce((acc, ex) => acc + extraLineTotal(ex.price || 0, ex.quantity || 1, extraDays, "per_day"), 0);
   const oldDays = pb.rentalDays || booking.rentalDuration || 1;
+  const newDays = computeRentalDays(booking.pickupDate, newReturn);
+  if (newReturn <= new Date(booking.pickupDate)) {
+    return NextResponse.json({ error: "Le retour doit rester après la date de départ." }, { status: 400 });
+  }
+  const delta = newDays - oldDays;
   const perDayContrib = oldDays > 0 ? Math.round((pb.contributionLF2026 || 0) / oldDays) : 0;
-  const contribAmount = perDayContrib * extraDays;
-  const amount = rentalAmount + perDayExtras + contribAmount;
+  const perDayExtras = (days: number) =>
+    onlySelected(booking.extras)
+      .filter((ex) => isPerDayPricing(ex.pricingType))
+      .reduce((acc, ex) => acc + extraLineTotal(ex.price || 0, ex.quantity || 1, days, "per_day"), 0);
+  let amount = 0;
+  let dailyUsed = 0;
 
-  const newDays = oldDays + extraDays;
-  pb.subtotal = (pb.subtotal || 0) + rentalAmount;
-  pb.extrasTotal = (pb.extrasTotal || 0) + perDayExtras;
-  pb.contributionLF2026 = (pb.contributionLF2026 || 0) + contribAmount;
+  if (delta > 0) {
+    // The SAME physical car must be free for the extra days.
+    const keep = await canKeepUnitsUntil(id, newReturn);
+    if (!keep.ok) {
+      return NextResponse.json(
+        {
+          error: `Extension impossible. Véhicule déjà réservé${keep.blockedBy ? ` (réservation ${keep.blockedBy})` : ""}.`,
+          code: "VEHICLE_ALREADY_RESERVED",
+        },
+        { status: 409 }
+      );
+    }
+    dailyUsed = a.dailyRateTND !== undefined ? Math.round(a.dailyRateTND * 100) : Number(vehicle?.pricing?.daily || 0);
+    const rental = dailyUsed * delta * Math.max(1, booking.vehicles?.length || 1);
+    const extras = perDayExtras(delta);
+    amount = rental + extras + perDayContrib * delta;
+    pb.subtotal = (pb.subtotal || 0) + rental;
+    pb.extrasTotal = (pb.extrasTotal || 0) + extras;
+  } else if (delta < 0) {
+    // Reduction: the removed days are refunded at the booking's average daily price.
+    const removed = -delta;
+    dailyUsed = Math.round((pb.subtotal || 0) / oldDays);
+    const rental = Math.round(((pb.subtotal || 0) * removed) / oldDays);
+    const extras = perDayExtras(removed);
+    amount = -(rental + extras + perDayContrib * removed);
+    pb.subtotal = Math.max(0, (pb.subtotal || 0) - rental);
+    pb.extrasTotal = Math.max(0, (pb.extrasTotal || 0) - extras);
+  }
+  pb.contributionLF2026 = Math.max(0, perDayContrib * newDays);
   pb.rentalDays = newDays;
-  pb.totalAmount = (pb.totalAmount || 0) + amount;
+  pb.totalAmount = Math.max(0, (pb.totalAmount || 0) + amount);
   booking.rentalDuration = newDays;
   booking.returnDate = newReturn;
   if (a.newReturnTime) booking.returnTime = a.newReturnTime;
@@ -572,45 +658,44 @@ async function handleAction(id: string, body: unknown, by: string) {
       ex.lineTotal = extraLineTotal(ex.price || 0, ex.quantity || 1, newDays, "per_day");
     }
   }
-  if (booking.paymentStatus === "paid") booking.paymentStatus = "partial";
+  if (delta > 0 && booking.paymentStatus === "paid") booking.paymentStatus = "partial";
   booking.extensions = [
     ...(booking.extensions || []),
-    { previousReturnDate: previousReturn, newReturnDate: newReturn, extraDays, dailyRate: baseDaily, amount, at: new Date(), by },
+    { previousReturnDate: previousReturn, newReturnDate: newReturn, extraDays: delta, dailyRate: dailyUsed, amount, at: new Date(), by },
   ];
+  const fmtAmt = `${amount >= 0 ? "+" : "−"}${(Math.abs(amount) / 100).toFixed(3)} DT`;
   booking.auditHistory.push({
-    action: "Prolongation de location",
+    action: delta > 0 ? "Prolongation de location" : delta < 0 ? "Réduction de la durée" : "Heure de retour modifiée",
     performedBy: by,
     performedByRole: "staff",
     timestamp: new Date(),
     previousValue: { returnDate: previousReturn },
     newValue: { returnDate: newReturn },
-    notes: `+${extraDays} jour(s) au prix de base ${(baseDaily / 100).toFixed(3)} DT/j = ${(amount / 100).toFixed(3)} DT${a.notes ? ` · ${a.notes}` : ""}`,
+    notes: `${delta > 0 ? "+" : ""}${delta} jour(s) · ${fmtAmt}${a.notes ? ` · ${a.notes}` : ""}`,
   });
   booking.markModified("pricingBreakdown");
   await booking.save();
-
-  // If the car assigned is already promised to someone else on the extra days, swap the other booking's car.
-  const swapped: string[] = [];
-  for (const c of conflicting) {
-    const dropped = await revalidateAssignments(String(c._id));
-    if (dropped.length) swapped.push(c.bookingReference);
-  }
+  // Claims the extra days (or frees the removed ones): calendar and availability follow immediately.
+  await syncBookingAssignment(id);
 
   await notifyStaff({
     type: "booking_extension",
-    severity: swapped.length ? "warning" : "info",
-    title: { fr: `Prolongation — ${booking.bookingReference}`, en: `Extension — ${booking.bookingReference}`, ar: `تمديد — ${booking.bookingReference}` },
+    severity: "info",
+    title: {
+      fr: `${delta >= 0 ? "Prolongation" : "Réduction"} — ${booking.bookingReference}`,
+      en: `${delta >= 0 ? "Extension" : "Shortened"} — ${booking.bookingReference}`,
+      ar: `تعديل — ${booking.bookingReference}`,
+    },
     message: {
-      fr: `${carLabel} prolongé de ${extraDays} j jusqu'au ${newReturn.toLocaleDateString("fr-FR")} (+${(amount / 100).toFixed(3)} DT).${swapped.length ? ` Véhicule réaffecté sur : ${swapped.join(", ")}.` : ""}`,
-      en: `${carLabel} extended by ${extraDays} day(s) until ${newReturn.toLocaleDateString("en-GB")} (+${(amount / 100).toFixed(3)} TND).`,
-      ar: `${carLabel} +${extraDays}`,
+      fr: `${carLabel} : retour le ${newReturn.toLocaleDateString("fr-FR")} (${delta > 0 ? "+" : ""}${delta} j, ${fmtAmt}).`,
+      en: `${carLabel}: return on ${newReturn.toLocaleDateString("en-GB")} (${delta > 0 ? "+" : ""}${delta} d, ${fmtAmt}).`,
+      ar: `${carLabel}`,
     },
     link: `/admin/bookings/${id}`,
-    data: { bookingId: id, licensePlate: plates, extraDays, amount },
+    data: { bookingId: id, licensePlate: plates, extraDays: delta, amount },
   });
 
-  void units;
-  return NextResponse.json({ success: true, booking, extraDays, amount, reassignedBookings: swapped });
+  return NextResponse.json({ success: true, booking, extraDays: delta, amount });
 }
 
 /** Records the odometer on the assigned physical car(s) (never decreases it). */
