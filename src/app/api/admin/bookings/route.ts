@@ -3,6 +3,7 @@ import { connectDB } from "@/lib/db";
 import { Booking, Vehicle, Customer, Location } from "@/models";
 import { sanitizeQuery } from "@/lib/utils";
 import { requirePermission } from "@/lib/permissions";
+import { releaseBooking } from "@/lib/fleetUnits";
 
 async function checkAdmin(level: string = "edit") {
   const guard = await requirePermission("bookings", level);
@@ -135,6 +136,10 @@ export async function GET(request: NextRequest) {
         returnTime: b.returnTime || "",
         customerNotes: b.customerNotes || "",
         isManualBooking: Boolean(b.isManualBooking),
+        pickupMileage: b.pickupMileage ?? null,
+        returnMileage: b.returnMileage ?? null,
+        internalNotes: b.internalNotes || "",
+        hasCar: (b.assignedUnits || []).some((u: any) => u.unitId),
         customerLanguage: b.customerLanguage || "fr",
         createdAt: b.createdAt,
       };
@@ -190,6 +195,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     await Booking.findByIdAndDelete(id);
+    await releaseBooking(id);
 
     return NextResponse.json({
       success: true,

@@ -80,8 +80,6 @@ export interface PDFBookingData {
   createdAt?: string;
   /** Booking status shown in the header (defaults to "confirmed"). */
   bookingStatus?: string;
-  /** Physical car(s) assigned (shown to the customer on the voucher). */
-  licensePlates?: string;
 }
 
 /**
@@ -258,9 +256,10 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   doc.text(vehicleNameText, rightX + 28, rightY, { maxWidth: colWidth - 30 });
 
   doc.setFont("helvetica", "bold");
-  doc.text(data.licensePlates ? "Immatriculation :" : "Catégorie :", rightX + 3, rightY + 5);
+  // The voucher goes to the customer: no plate, no internal fleet identifiers.
+  doc.text("Catégorie :", rightX + 3, rightY + 5);
   doc.setFont("helvetica", "normal");
-  doc.text(data.licensePlates || "Économique / Standard Garantie", rightX + 28, rightY + 5, { maxWidth: colWidth - 30 });
+  doc.text("Économique / Standard Garantie", rightX + 28, rightY + 5, { maxWidth: colWidth - 30 });
 
   doc.setFont("helvetica", "bold");
   doc.text("Durée facturée :", rightX + 3, rightY + 10);
@@ -660,38 +659,22 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   y += termsBoxHeight + 5;
 
   // ==========================================
-  // 6. SIGNATURES — customer (left) / agency stamp & signature (right)
+  // 6. AGENCY STAMP & SIGNATURE — right under the conditions (no customer signature on the voucher)
   // ==========================================
   const stampW = 62;
   const stampH = stampW / STAMP_SIGNATURE_RATIO;
-  const blockH = stampH + 7;
   const footerTop = pageHeight - 13;
-  if (y + blockH > footerTop) {
+  if (y + stampH + 6 > footerTop) {
     doc.addPage();
     y = 16;
   }
-  // Anchor the block at the bottom of the page for a consistent look.
-  const blockY = Math.max(y, footerTop - blockH - 2);
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.5);
-  doc.setTextColor(...NAVY);
-  doc.text("BON POUR ACCORD — LE CLIENT", marginLeft, blockY + 3);
-  doc.setDrawColor(...BORDER);
-  doc.setLineWidth(0.3);
-  doc.roundedRect(marginLeft, blockY + 5, 70, stampH - 2, 2, 2, "D");
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(6.5);
-  doc.setTextColor(...MUTED);
-  doc.text("Signature précédée de « Lu et approuvé »", marginLeft + 3, blockY + stampH);
-
   const stampX = pageWidth - marginRight - stampW;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.5);
   doc.setTextColor(...NAVY);
-  doc.text("CACHET & SIGNATURE DE L'AGENCE", stampX + stampW, blockY + 3, { align: "right" });
+  doc.text("CACHET & SIGNATURE DE L'AGENCE", stampX + stampW, y + 3, { align: "right" });
   try {
-    doc.addImage(STAMP_SIGNATURE_PNG, "PNG", stampX, blockY + 5, stampW, stampH, "agency-stamp", "SLOW");
+    doc.addImage(STAMP_SIGNATURE_PNG, "PNG", stampX, y + 5, stampW, stampH, "agency-stamp", "SLOW");
   } catch (err) {
     console.error("Stamp image could not be embedded:", err);
   }

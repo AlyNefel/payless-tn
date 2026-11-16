@@ -26,6 +26,7 @@ export const ACTION_LABELS: Record<Action, string> = {
 export const RESOURCES: ResourceDef[] = [
   { key: "dashboard", label: "Tableau de bord", group: "Pilotage", href: "/admin", actions: ["view"] },
   { key: "reporting", label: "Rapports", group: "Pilotage", actions: ["view", "export"] },
+  { key: "counter", label: "Espace assistance (départs / retours)", group: "Réservations", href: "/admin/worker", actions: ["view"] },
   { key: "bookings", label: "Réservations", group: "Réservations", href: "/admin/bookings", actions: ["view", "create", "edit", "cancel", "delete", "export"] },
   { key: "calendar", label: "Calendrier", group: "Réservations", href: "/admin/calendar", actions: ["view"] },
   { key: "steps", label: "Étapes de réservation", group: "Réservations", href: "/admin/steps", actions: ["view", "edit"] },
@@ -68,6 +69,7 @@ const all = (resources: string[], actions?: Action[]) =>
 const every = (exclude: string[] = []) => RESOURCES.filter((r) => !exclude.includes(r.key)).map((r) => r.key);
 
 export const SUPERADMIN_KEY = "superadmin";
+export const WORKER_KEY = "worker";
 
 export const SYSTEM_ROLES: RoleDef[] = [
   {
@@ -82,7 +84,8 @@ export const SYSTEM_ROLES: RoleDef[] = [
     key: "admin",
     name: "Administrateur",
     description: "Gère toute l'agence sauf les utilisateurs et les rôles.",
-    permissions: [...all(every(["users", "roles"])), "users.view", "roles.view"],
+    // Manages the team's accounts (cannot create or touch a super admin, cannot edit roles).
+    permissions: [...all(every(["roles"])), "roles.view"],
     isSystem: true,
     color: "blue",
   },
@@ -104,6 +107,7 @@ export const SYSTEM_ROLES: RoleDef[] = [
     name: "Agent (accès limité)",
     description: "Comptoir : réservations, garage et notifications.",
     permissions: [
+      "counter.view",
       "dashboard.view",
       "bookings.view",
       "bookings.create",
@@ -120,6 +124,22 @@ export const SYSTEM_ROLES: RoleDef[] = [
     ],
     isSystem: true,
     color: "amber",
+  },
+  {
+    key: WORKER_KEY,
+    name: "Worker Assistance",
+    description: "Livraisons et retours : départ, retour, kilométrage, notes, prolongation / réduction.",
+    permissions: [
+      "counter.view",
+      "dashboard.view",
+      "bookings.view",
+      "bookings.create",
+      "bookings.edit",
+      "calendar.view",
+      "notifications.view",
+    ],
+    isSystem: true,
+    color: "teal",
   },
 ];
 

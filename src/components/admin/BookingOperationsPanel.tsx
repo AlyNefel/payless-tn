@@ -62,7 +62,8 @@ function toISODate(d: string | Date) {
 export function BookingOperationsPanel(props: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [modal, setModal] = useState<null | "pickup" | "return" | "extend">(null);
+  const [modal, setModal] = useState<null | "pickup" | "return" | "extend" | "note">(null);
+  const [toGarage, setToGarage] = useState(false);
   const [mileage, setMileage] = useState("");
   const [notes, setNotes] = useState("");
   const [newReturnDate, setNewReturnDate] = useState(() => {
@@ -82,7 +83,7 @@ export function BookingOperationsPanel(props: Props) {
   const extraDays = useMemo(() => {
     const a = new Date(toISODate(props.returnDate)).getTime();
     const b = new Date(newReturnDate).getTime();
-    return Math.max(0, Math.round((b - a) / 86_400_000));
+    return Math.round((b - a) / 86_400_000);
   }, [newReturnDate, props.returnDate]);
 
   const call = async (key: string, body: Record<string, unknown>, okText: string) => {
@@ -124,11 +125,11 @@ export function BookingOperationsPanel(props: Props) {
   const whatsappHref = useMemo(() => {
     const phone = String(props.customerPhone || "").replace(/[^\d]/g, "");
     if (!phone) return "";
-    const plates = props.assignedUnits.map((a) => a.licensePlate).filter(Boolean).join(", ");
+    // Customer message: reference, model and dates only — never the plate or internal ids.
     const text =
       `Bonjour ${props.customerName || ""},\n` +
       `Votre réservation Payless ${props.bookingReference} est confirmée.` +
-      (plates ? `\nVéhicule : ${plates}` : "") +
+      (props.models.length ? `\nVéhicule : ${props.models.map((m) => m.label).join(" + ")}` : "") +
       `\nRetour prévu le ${new Date(props.returnDate).toLocaleDateString("fr-FR")}${props.returnTime ? ` à ${props.returnTime}` : ""}.` +
       `\nMerci de votre confiance !`;
     return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
@@ -255,7 +256,15 @@ export function BookingOperationsPanel(props: Props) {
             onClick={() => setModal("extend")}
             className={`${btn} bg-amber-500 hover:bg-amber-400 text-white`}
           >
-            <CalendarPlus className="w-4 h-4" /> Prolongation
+            <CalendarPlus className="w-4 h-4" /> Prolonger / réduire
+          </button>
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => setModal("note")}
+            className={`${btn} sm:col-span-3 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}
+          >
+            Ajouter une note interne
           </button>
         </div>
       )}
@@ -265,14 +274,24 @@ export function BookingOperationsPanel(props: Props) {
           <div className="w-full sm:max-w-md max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-700 shadow-2xl p-5 space-y-4 text-xs">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                {modal === "pickup" ? "Enregistrer le départ" : modal === "return" ? "Enregistrer le retour" : "Prolonger la location"}
+                {modal === "pickup" ? "Enregistrer le départ" : modal === "return" ? "Enregistrer le retour" : modal === "note" ? "Note interne" : "Prolonger ou réduire la location"}
               </h3>
               <button type="button" onClick={() => setModal(null)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {modal !== "extend" ? (
+            {msg && !msg.ok && (
+              <p role="alert" className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 text-red-800 dark:text-red-300 font-semibold flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" /> {msg.text}
+              </p>
+            )}
+            {modal === "note" ? (
+              <label className="block space-y-1">
+                <span className="font-semibold text-slate-700 dark:text-slate-300">Note (visible uniquement par l&apos;équipe)</span>
+                <textarea className={`${input} h-24 py-2`} value={notes} onChange={(e) => setNotes(e.target.value)} />
+              </label>
+            ) : modal !== "extend" ? (
               <>
                 <label className="block space-y-1">
                   <span className="font-semibold text-slate-700 dark:text-slate-300">
@@ -287,13 +306,19 @@ export function BookingOperationsPanel(props: Props) {
                   <span className="font-semibold text-slate-700 dark:text-slate-300">Remarques (état, carburant…)</span>
                   <textarea className={`${input} h-20 py-2`} value={notes} onChange={(e) => setNotes(e.target.value)} />
                 </label>
+                {modal === "return" && (
+                  <label className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300">
+                    <input type="checkbox" checked={toGarage} onChange={(e) => setToGarage(e.target.checked)} />
+                    Envoyer le véhicule au garage après ce retour
+                  </label>
+                )}
               </>
             ) : (
               <>
                 <div className="grid grid-cols-2 gap-2">
                   <label className="block space-y-1">
                     <span className="font-semibold text-slate-700 dark:text-slate-300">Nouvelle date de retour</span>
-                    <input type="date" className={input} min={toISODate(props.returnDate)} value={newReturnDate} onChange={(e) => setNewReturnDate(e.target.value)} />
+                    <input type="date" className={input} value={newReturnDate} onChange={(e) => setNewReturnDate(e.target.value)} />
                   </label>
                   <label className="block space-y-1">
                     <span className="font-semibold text-slate-700 dark:text-slate-300">Heure</span>
@@ -305,9 +330,14 @@ export function BookingOperationsPanel(props: Props) {
                   <input type="number" min={0} step="0.001" className={input} value={dailyRate} onChange={(e) => setDailyRate(e.target.value)} />
                 </label>
                 <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 font-semibold">
-                  {extraDays} jour(s) supplémentaire(s) × {Number(dailyRate || 0).toFixed(3)} DT ={" "}
-                  {(extraDays * Number(dailyRate || 0)).toFixed(3)} DT
-                  <span className="block font-normal text-[11px] opacity-80">+ options facturées par jour et contribution, calculées automatiquement.</span>
+                  {extraDays > 0
+                    ? `Prolongation : ${extraDays} jour(s) × ${Number(dailyRate || 0).toFixed(3)} DT = ${(extraDays * Number(dailyRate || 0)).toFixed(3)} DT`
+                    : extraDays < 0
+                    ? `Réduction de ${-extraDays} jour(s) : le montant sera recalculé au prix moyen de la réservation.`
+                    : "Même date : seule l'heure peut changer."}
+                  <span className="block font-normal text-[11px] opacity-80">
+                    Une prolongation n&apos;est acceptée que si ce même véhicule est libre sur les jours ajoutés.
+                  </span>
                 </div>
                 <label className="block space-y-1">
                   <span className="font-semibold text-slate-700 dark:text-slate-300">Remarque</span>
@@ -322,22 +352,24 @@ export function BookingOperationsPanel(props: Props) {
               </button>
               <button
                 type="button"
-                disabled={busy !== null || (modal === "extend" && extraDays < 1)}
+                disabled={busy !== null || (modal === "note" && notes.trim().length < 1)}
                 onClick={() => {
                   const km = mileage.trim() === "" ? undefined : Number(mileage);
                   if (modal === "pickup") call("pickup", { action: "record_pickup", mileage: km, notes: notes || undefined }, "Départ enregistré — location en cours");
-                  else if (modal === "return") call("return", { action: "record_return", mileage: km, notes: notes || undefined }, "Retour enregistré — location clôturée");
+                  else if (modal === "return")
+                    call("return", { action: "record_return", mileage: km, notes: notes || undefined, unitStatus: toGarage ? "maintenance" : "active" }, "Retour enregistré — location clôturée");
+                  else if (modal === "note") call("note", { action: "add_note", note: notes.trim() }, "Note ajoutée");
                   else
                     call(
                       "extend",
                       {
-                        action: "extend",
+                        action: "change_return",
                         newReturnDate,
                         newReturnTime: newReturnTime || undefined,
-                        dailyRateTND: dailyRate === "" ? undefined : Number(dailyRate),
+                        dailyRateTND: extraDays > 0 && dailyRate !== "" ? Number(dailyRate) : undefined,
                         notes: notes || undefined,
                       },
-                      `Location prolongée de ${extraDays} jour(s)`
+                      extraDays > 0 ? `Location prolongée de ${extraDays} jour(s)` : extraDays < 0 ? `Durée réduite de ${-extraDays} jour(s)` : "Heure de retour modifiée"
                     );
                 }}
                 className={`${btn} bg-blue-600 hover:bg-blue-500 text-white`}

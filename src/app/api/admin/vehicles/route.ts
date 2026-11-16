@@ -6,6 +6,7 @@ import Vehicle from "@/models/Vehicle";
 import VehicleCategory from "@/models/VehicleCategory";
 import { sanitizeQuery } from "@/lib/utils";
 import { deleteImages, markImagesAttached } from "@/lib/cloudinary";
+import { reassignBookingsOfUnit } from "@/lib/fleetUnits";
 import { requirePermission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
@@ -316,6 +317,15 @@ export async function PUT(request: NextRequest) {
       { $set: setFields },
       { returnDocument: "after", runValidators: true }
     );
+
+    // Cars removed or taken out of service: their future reservations move to another free car.
+    if (parsed.data.units?.length) {
+      const still = new Map(((setFields.units as any[]) || []).map((u) => [String(u._id || ""), u.status]));
+      for (const prev of previous.units || []) {
+        const st = still.get(String(prev._id));
+        if (st !== "active") await reassignBookingsOfUnit(String(prev._id)).catch((e) => console.error("reassign:", e));
+      }
+    }
 
     // Orphan cleanup: Cloudinary assets removed from the gallery are deleted.
     const kept = new Set(parsed.data.images.map((i) => i.publicId).filter(Boolean));

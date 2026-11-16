@@ -63,6 +63,7 @@ const NAV_GROUPS: NavGroup[] = [
     icon: LayoutDashboard,
     items: [
       { title: "Tableau de bord", href: "/admin", icon: LayoutDashboard },
+      { title: "Espace assistance", href: "/admin/worker", icon: CheckCircle2 },
       { title: "Calendrier Flotte", href: "/admin/calendar", icon: CalendarDays },
     ],
   },
@@ -115,6 +116,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { title: "Paramètres Agence", href: "/admin/settings", icon: Settings },
       { title: "Utilisateurs", href: "/admin/users", icon: Users },
+      { title: "Agents d'assistance", href: "/admin/users?role=worker", icon: Users },
       { title: "Rôles & permissions", href: "/admin/roles", icon: ShieldCheck },
     ],
   },
@@ -334,6 +336,8 @@ function AdminLayoutContent({
     if (href === "/admin/emails") return lang === "fr" ? "Journal Emails" : "Email Logs";
     if (href === "/admin/settings") return lang === "fr" ? "Paramètres" : "Settings";
     if (href === "/admin/users") return lang === "fr" ? "Utilisateurs" : "Users";
+    if (href === "/admin/users?role=worker") return lang === "fr" ? "Agents d'assistance" : "Assistance workers";
+    if (href === "/admin/worker") return lang === "fr" ? "Espace assistance" : "Assistance workspace";
     if (href === "/admin/roles") return lang === "fr" ? "Rôles & permissions" : "Roles & permissions";
     return fallback;
   };
@@ -827,7 +831,7 @@ function AdminLayoutContent({
             </div>
           ) : (
             <>
-              {currentAccess === "view" && (
+              {currentAccess === "view" && currentSection !== "counter" && currentSection !== "calendar" && (
                 <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs font-semibold flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 shrink-0" />
                   Accès en lecture seule : les modifications de cette section sont réservées aux rôles autorisés.

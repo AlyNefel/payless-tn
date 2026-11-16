@@ -19,6 +19,8 @@ import {
   Settings2,
 } from "lucide-react";
 import { useAdminLang } from "@/contexts/AdminLangContext";
+import { InsurancePanel } from "@/components/admin/InsurancePanel";
+import { ViewToggle, useViewMode } from "@/components/admin/ui";
 
 type State = "ok" | "soon" | "overdue" | "unknown";
 
@@ -81,7 +83,7 @@ interface AlertSettings {
   enabled: Record<string, boolean>;
 }
 
-type Tab = "vidange" | "maintenance" | "inspection";
+type Tab = "vidange" | "maintenance" | "inspection" | "assurance";
 type Modal =
   | { kind: "vidange"; unit: GarageUnit }
   | { kind: "inspection"; unit: GarageUnit }
@@ -133,6 +135,7 @@ export default function GaragePage() {
   const [settings, setSettings] = useState<AlertSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("vidange");
+  const [view, setView] = useViewMode("garage", "grid");
   const [search, setSearch] = useState("");
   const [onlyAttention, setOnlyAttention] = useState(false);
   const [focusUnit, setFocusUnit] = useState<string | null>(null);
@@ -163,7 +166,7 @@ export default function GaragePage() {
     // Deep links from notifications: /admin/garage?tab=inspection&unit=<id>
     const params = new URLSearchParams(window.location.search);
     const t = params.get("tab");
-    if (t === "maintenance" || t === "inspection" || t === "vidange") setTab(t);
+    if (t === "maintenance" || t === "inspection" || t === "vidange" || t === "assurance") setTab(t);
     setFocusUnit(params.get("unit"));
     load();
   }, []);
@@ -217,6 +220,7 @@ export default function GaragePage() {
     { id: "vidange", label: "Vidange", icon: Droplets, badge: (stats?.vidange.overdue || 0) + (stats?.vidange.soon || 0) },
     { id: "maintenance", label: "Maintenance", icon: Wrench, badge: (stats?.maintenance.open || 0) + (stats?.maintenance.dueSoon || 0) },
     { id: "inspection", label: en ? "Technical inspection" : "Visite technique", icon: ClipboardCheck, badge: (stats?.inspection.overdue || 0) + (stats?.inspection.soon || 0) },
+    { id: "assurance", label: en ? "Insurance" : "Assurance", icon: ShieldAlert, badge: 0 },
   ];
 
   return (
@@ -291,6 +295,10 @@ export default function GaragePage() {
         ))}
       </div>
 
+      {tab === "assurance" ? (
+        <InsurancePanel focusUnit={focusUnit} />
+      ) : (
+        <>
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-2">
         <div className="relative flex-1">
@@ -306,6 +314,7 @@ export default function GaragePage() {
           <input type="checkbox" checked={onlyAttention} onChange={(e) => setOnlyAttention(e.target.checked)} />
           {en ? "Needs attention only" : "À traiter uniquement"}
         </label>
+        <ViewToggle value={view} onChange={setView} />
         {focusUnit && (
           <button type="button" onClick={() => setFocusUnit(null)} className={`${btn} border border-slate-200 dark:border-slate-700`}>
             <X className="w-3.5 h-3.5" /> {en ? "Show all" : "Tout afficher"}
@@ -320,12 +329,81 @@ export default function GaragePage() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="py-16 text-center text-sm text-slate-500">{en ? "Nothing to show." : "Aucun véhicule à afficher."}</div>
+      ) : view === "table" ? (
+        <div className="rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 overflow-x-auto">
+          <table className="w-full text-xs min-w-[760px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-100 dark:border-slate-800">
+                <th className="p-3">Véhicule</th>
+                <th className="p-3">Statut</th>
+                <th className="p-3">Km</th>
+                {tab === "vidange" && <th className="p-3">Prochaine vidange</th>}
+                {tab === "vidange" && <th className="p-3">Reste</th>}
+                {tab === "inspection" && <th className="p-3">Visite technique</th>}
+                {tab === "inspection" && <th className="p-3">Assurance</th>}
+                {tab === "maintenance" && <th className="p-3">Prochain entretien</th>}
+                {tab === "maintenance" && <th className="p-3">Interventions ouvertes</th>}
+                <th className="p-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {filtered.map((u) => (
+                <tr key={u.unitId} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
+                  <td className="p-3">
+                    <span className="block font-mono font-bold text-slate-900 dark:text-white">{u.label}</span>
+                    <span className="block text-slate-500">{u.brand} {u.model}</span>
+                  </td>
+                  <td className="p-3">{u.status === "active" ? "En service" : u.status === "maintenance" ? "Au garage" : "Hors service"}</td>
+                  <td className="p-3 whitespace-nowrap">{fmtKm(u.mileage)}</td>
+                  {tab === "vidange" && <td className="p-3 whitespace-nowrap">{fmtKm(u.nextVidangeMileage)}</td>}
+                  {tab === "vidange" && (
+                    <td className="p-3">
+                      <StatePill state={u.vidangeState}>{u.remainingKm <= 0 ? `Dépassée de ${fmtKm(-u.remainingKm)}` : fmtKm(u.remainingKm)}</StatePill>
+                    </td>
+                  )}
+                  {tab === "inspection" && (
+                    <td className="p-3">
+                      <StatePill state={u.inspectionState}>{u.inspectionDays === null ? "Non renseignée" : `${fmtDate(u.technicalInspectionDate)} · ${u.inspectionDays} j`}</StatePill>
+                    </td>
+                  )}
+                  {tab === "inspection" && (
+                    <td className="p-3">
+                      <StatePill state={u.insuranceState}>{u.insuranceDays === null ? "Non renseignée" : `${fmtDate(u.insuranceExpiryDate)} · ${u.insuranceDays} j`}</StatePill>
+                    </td>
+                  )}
+                  {tab === "maintenance" && <td className="p-3">{u.nextMaintenanceDate ? fmtDate(u.nextMaintenanceDate) : "Non planifié"}</td>}
+                  {tab === "maintenance" && <td className="p-3 font-bold">{u.openMaintenance}</td>}
+                  <td className="p-3">
+                    <div className="flex justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setModal({ kind: tab === "vidange" ? "vidange" : tab === "inspection" ? "inspection" : "maintenance", unit: u })}
+                        className={`${btn} bg-blue-600 hover:bg-blue-500 text-white`}
+                      >
+                        {tab === "maintenance" ? "Intervention" : "Faite"}
+                      </button>
+                      <button type="button" onClick={() => setModal({ kind: "edit", unit: u })} className={`${btn} border border-slate-200 dark:border-slate-700`}>
+                        Modifier
+                      </button>
+                      <button type="button" onClick={() => setModal({ kind: "history", unit: u })} className={`${btn} border border-slate-200 dark:border-slate-700`}>
+                        Historique
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((u) => (
             <UnitCard key={u.unitId} u={u} tab={tab} onOpen={setModal} />
           ))}
         </div>
+      )}
+
+        </>
       )}
 
       {modal && (

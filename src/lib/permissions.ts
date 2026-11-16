@@ -33,6 +33,16 @@ async function ensureSystemRoles() {
   const missing = SYSTEM_ROLES.filter((r) => !have.has(r.key));
   if (!missing.length) return;
 
+  // Upgrade of an existing installation (roles already there, "worker" is new): administrators
+  // receive the account-management permissions needed to create Worker Assistance accounts.
+  if (have.size > 0 && missing.some((r) => r.key === "worker")) {
+    await Role.updateOne(
+      { key: "admin" },
+      { $addToSet: { permissions: { $each: ["users.view", "users.create", "users.edit", "users.delete", "counter.view"] } } }
+    );
+    await Role.updateMany({ key: { $in: ["manager", "staff"] } }, { $addToSet: { permissions: "counter.view" } });
+  }
+
   const legacy = (await AgencySetting.findOne({ key: "rolePermissions" }).lean())?.value as
     | Record<string, Record<string, AccessLevel>>
     | undefined;
