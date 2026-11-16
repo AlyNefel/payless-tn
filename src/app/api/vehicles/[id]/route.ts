@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import { Vehicle } from "@/models";
-import { getVehicleStockAvailability } from "@/lib/availability";
+import { getVehicleStockAvailability, stockWithoutDates } from "@/lib/availability";
 import { sanitizeVehicleForClient } from "@/lib/sanitize";
 import { isStaffRequest } from "@/lib/apiAuth";
 import mongoose from "mongoose";
@@ -37,12 +37,7 @@ export async function GET(
     const pickupDateStr = searchParams.get("pickupDate");
     const returnDateStr = searchParams.get("returnDate");
 
-    let stockInfo = {
-      totalUnits: Math.max(1, (vehicle as any).totalUnits || 3),
-      bookedUnits: 0,
-      availableUnits: Math.max(1, (vehicle as any).availableUnits || (vehicle as any).totalUnits || 3),
-      isAvailable: (vehicle as any).status === "available",
-    };
+    let stockInfo = stockWithoutDates(vehicle as any);
 
     if (pickupDateStr && returnDateStr) {
       const pDate = new Date(pickupDateStr);

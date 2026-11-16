@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, Suspense } from "react";
 import { useTranslations, useLocale } from "next-intl";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link } from "@/i18n/navigation";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import {
   Search, SlidersHorizontal, Fuel, Users, Gauge, Car,
   X, CheckCircle, MapPin, Sparkles, Shield, Eye, Calendar,
@@ -69,10 +69,53 @@ function VehiclesContent() {
   const [maxPrice, setMaxPrice] = useState(300);
   const [sortBy, setSortBy] = useState("price_asc");
 
-  const pickupDate = searchParams.get("pickupDate") || "";
-  const returnDate = searchParams.get("returnDate") || "";
+  const router = useRouter();
+  const pathname = usePathname();
+
+  // Availability is always computed for an explicit period: the one chosen in the search box,
+  // or by default tomorrow → +3 days (same default as the booking wizard). Local dates (no UTC shift).
+  const localDay = (offset: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const today = localDay(0);
+  const [pickupDate, setPickupDate] = useState(searchParams.get("pickupDate") || localDay(1));
+  const [returnDate, setReturnDate] = useState(searchParams.get("returnDate") || localDay(4));
+  const datesValid = Boolean(pickupDate && returnDate && returnDate > pickupDate && pickupDate >= today);
+
+  const updatePeriod = (nextPickup: string, nextReturn: string) => {
+    // Keep the period coherent: the return is always at least one day after the pickup.
+    if (nextPickup && (!nextReturn || nextReturn <= nextPickup)) {
+      const d = new Date(`${nextPickup}T12:00:00`);
+      d.setDate(d.getDate() + 1);
+      nextReturn = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    }
+    setPickupDate(nextPickup);
+    setReturnDate(nextReturn);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("pickupDate", nextPickup);
+    params.set("returnDate", nextReturn);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+
+  /** Booking link carrying the period, times and agencies chosen in the search box. */
+  const bookingHref = (vehicleId: string) => {
+    const q = new URLSearchParams({ vehicleId, pickupDate, returnDate });
+    for (const k of ["pickupTime", "returnTime", "pickupLocation", "returnLocation"]) {
+      const v = searchParams.get(k);
+      if (v) q.set(k, v);
+    }
+    return `/booking?${q.toString()}`;
+  };
 
   const fetchVehicles = useCallback(async () => {
+    if (!datesValid) {
+      setVehicles([]);
+      setTotalCount(0);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -99,7 +142,7 @@ function VehiclesContent() {
     } finally {
       setLoading(false);
     }
-  }, [search, transmission, fuelType, seats, maxPrice, sortBy, pickupDate, returnDate]);
+  }, [search, transmission, fuelType, seats, maxPrice, sortBy, pickupDate, returnDate, datesValid]);
 
   useEffect(() => {
     fetchVehicles();
@@ -187,6 +230,43 @@ function VehiclesContent() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Rental period: availability shown below is exact for these dates */}
+        <div className="mb-5 p-4 rounded-2xl bg-white dark:bg-[#0d0d0d] border border-border dark:border-neutral-800 shadow-sm flex flex-col sm:flex-row sm:items-end gap-3">
+          <div className="flex items-center gap-2 text-sm font-bold text-foreground sm:mr-2 sm:self-center">
+            <Calendar className="w-4 h-4 text-amber-500" />
+            {locale === "fr" ? "Vos dates" : locale === "ar" ? "تواريخك" : "Your dates"}
+          </div>
+          <label className="flex-1 min-w-0">
+            <span className="block text-[11px] font-semibold text-muted-foreground mb-1">
+              {locale === "fr" ? "Départ" : locale === "ar" ? "الاستلام" : "Pick-up"}
+            </span>
+            <input
+              type="date"
+              min={today}
+              value={pickupDate}
+              onChange={(e) => updatePeriod(e.target.value, returnDate)}
+              className="w-full px-3 py-2.5 rounded-xl border border-border dark:border-neutral-800 bg-white dark:bg-black text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+          </label>
+          <label className="flex-1 min-w-0">
+            <span className="block text-[11px] font-semibold text-muted-foreground mb-1">
+              {locale === "fr" ? "Retour" : locale === "ar" ? "الإرجاع" : "Return"}
+            </span>
+            <input
+              type="date"
+              min={pickupDate || today}
+              value={returnDate}
+              onChange={(e) => updatePeriod(pickupDate, e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl border border-border dark:border-neutral-800 bg-white dark:bg-black text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400"
+            />
+          </label>
+          {!datesValid && (
+            <p className="text-xs font-semibold text-red-600 sm:self-center">
+              {locale === "fr" ? "Choisissez une période valide (à partir d'aujourd'hui)." : locale === "ar" ? "اختر فترة صحيحة." : "Choose a valid period (from today)."}
+            </p>
+          )}
+        </div>
+
         {/* Search & Filter Bar */}
         <div className="flex flex-col md:flex-row gap-4 mb-6">
           <div className="relative flex-1">
@@ -291,10 +371,14 @@ function VehiclesContent() {
           <p className="text-sm text-muted-foreground font-medium">
             {loading
               ? (locale === "fr" ? "Chargement des voitures..." : locale === "ar" ? "جار التحميل..." : "Loading vehicles...")
-              : `${totalCount} ${locale === "fr" ? `voiture${totalCount !== 1 ? "s" : ""} disponible${totalCount !== 1 ? "s" : ""}` : locale === "ar" ? "سيارة متاحة" : `car${totalCount !== 1 ? "s" : ""} available`}`
+              : `${totalCount} ${locale === "fr" ? `modèle${totalCount !== 1 ? "s" : ""} disponible${totalCount !== 1 ? "s" : ""}` : locale === "ar" ? "طراز متاح" : `model${totalCount !== 1 ? "s" : ""} available`} ${
+                  datesValid
+                    ? `${locale === "fr" ? "du" : locale === "ar" ? "من" : "from"} ${new Date(`${pickupDate}T12:00:00`).toLocaleDateString(locale === "ar" ? "ar-TN" : locale === "en" ? "en-GB" : "fr-FR", { day: "2-digit", month: "short" })} ${locale === "fr" ? "au" : locale === "ar" ? "إلى" : "to"} ${new Date(`${returnDate}T12:00:00`).toLocaleDateString(locale === "ar" ? "ar-TN" : locale === "en" ? "en-GB" : "fr-FR", { day: "2-digit", month: "short" })}`
+                    : ""
+                }`
             }
           </p>
-          {pickupDate && returnDate && (
+          {datesValid && !loading && (
             <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800">
               <CheckCircle className="w-3.5 h-3.5" />
               {locale === "fr" ? "Disponibilité vérifiée pour vos dates" : locale === "ar" ? "التوفر مؤكد لتاريخكم" : "Availability verified for your dates"}
@@ -338,8 +422,8 @@ function VehiclesContent() {
                 const dailyTND = getDailyTND(v);
                 const dailyEUR = Math.round(dailyTND / 3.35);
                 const depositTND = getDepositTND(v);
-                const availableCount = v.availableUnits ?? 3;
-                const isAvailable = v.status === "available" && availableCount > 0;
+                // The API only returns models with at least one free car for the period.
+                const availableCount = v.availableUnits ?? 0;
 
                 return (
                   <motion.div
@@ -363,14 +447,16 @@ function VehiclesContent() {
                         />
                         {/* Status badge */}
                         <div className="absolute top-3 left-3 flex items-center gap-1.5">
-                          {isAvailable ? (
-                            <span className="bg-emerald-500 text-white text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 shadow-md">
-                              <span className="w-1.5 h-1.5 rounded-full bg-white inline-block animate-pulse" />
-                              {availableCount} {locale === "ar" ? "متوفرة" : locale === "fr" ? "disponibles" : "available"}
-                            </span>
-                          ) : (
-                            <span className="bg-red-500 text-white text-[11px] font-bold px-2.5 py-1 rounded-full shadow-md">
-                              {locale === "fr" ? "Complet" : locale === "ar" ? "غير متوفر" : "Sold out"}
+                          {availableCount > 0 && (
+                            <span
+                              className={`text-white text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 shadow-md ${
+                                availableCount === 1 ? "bg-amber-500" : "bg-emerald-500"
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-white inline-block" />
+                              {availableCount === 1
+                                ? locale === "ar" ? "آخر سيارة متاحة" : locale === "fr" ? "Dernière disponible" : "Last one available"
+                                : `${availableCount} ${locale === "ar" ? "متوفرة" : locale === "fr" ? "disponibles" : "available"}`}
                             </span>
                           )}
                         </div>
@@ -440,7 +526,7 @@ function VehiclesContent() {
                           </button>
 
                           <Link
-                            href={`/booking?vehicleId=${v._id}${pickupDate ? `&pickupDate=${pickupDate}` : ""}${returnDate ? `&returnDate=${returnDate}` : ""}`}
+                            href={bookingHref(v._id)}
                             className="px-4 py-2 text-xs font-bold rounded-xl text-black shadow-md hover:shadow-amber-500/20 hover:scale-102 transition-all"
                             style={{ background: "linear-gradient(135deg, #d4af37, #f5c842)" }}
                           >
@@ -487,12 +573,12 @@ function VehiclesContent() {
                     className="object-cover"
                   />
                   <div className="absolute top-3 left-3 bg-emerald-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow">
-                    ✓ {modalVehicle.availableUnits ?? 3}{" "}
+                    ✓ {modalVehicle.availableUnits ?? 0}{" "}
                     {locale === "ar"
-                      ? "سيارات متوفرة في الأسطول"
+                      ? "متوفرة لتواريخك"
                       : locale === "en"
-                      ? "cars available in fleet"
-                      : "véhicules disponibles dans le parc"}
+                      ? "available for your dates"
+                      : "disponible(s) pour vos dates"}
                   </div>
                 </div>
 
@@ -633,7 +719,7 @@ function VehiclesContent() {
                     {locale === "fr" ? "Fermer" : locale === "ar" ? "إغلاق" : "Close"}
                   </button>
                   <Link
-                    href={`/booking?vehicleId=${modalVehicle._id}${pickupDate ? `&pickupDate=${pickupDate}` : ""}${returnDate ? `&returnDate=${returnDate}` : ""}`}
+                    href={bookingHref(modalVehicle._id)}
                     className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-black font-bold text-sm shadow-lg hover:shadow-amber-500/30 transition-all hover:-translate-y-0.5"
                     style={{ background: "linear-gradient(135deg, #d4af37, #f5c842)" }}
                   >

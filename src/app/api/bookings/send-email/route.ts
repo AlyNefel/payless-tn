@@ -135,8 +135,14 @@ export async function POST(request: NextRequest) {
       vehicles: pdfVehicles,
       pickupLocation: pickupLocName,
       returnLocation: returnLocName,
-      pickupDate: formatDate(booking.pickupDate, "fr-FR"),
-      returnDate: formatDate(booking.returnDate, "fr-FR"),
+      pickupDate: `${formatDate(booking.pickupDate, "fr-FR")}${booking.pickupTime ? ` à ${booking.pickupTime}` : ""}`,
+      returnDate: `${formatDate(booking.returnDate, "fr-FR")}${booking.returnTime ? ` à ${booking.returnTime}` : ""}`,
+      bookingStatus: booking.bookingStatus,
+      licensePlates:
+        ((booking as any).assignedUnits || [])
+          .map((u: any) => u.licensePlate)
+          .filter(Boolean)
+          .join(", ") || undefined,
       rentalDuration: booking.rentalDuration,
       dailyRate: booking.pricingBreakdown?.dailyRate || 0,
       subtotal: booking.pricingBreakdown?.subtotal || 0,

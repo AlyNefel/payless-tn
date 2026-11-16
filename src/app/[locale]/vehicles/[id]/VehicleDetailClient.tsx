@@ -127,7 +127,34 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
     }
   }, [pickupDate, returnDate, vehicle]);
 
+  // Exact availability for the chosen dates (same engine as the booking API).
+  const [periodStock, setPeriodStock] = useState<{ available: number; checked: string } | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("pickupDate")) setPickupDate(q.get("pickupDate") || "");
+    if (q.get("returnDate")) setReturnDate(q.get("returnDate") || "");
+  }, []);
+  useEffect(() => {
+    if (!pickupDate || !returnDate || returnDate <= pickupDate) {
+      setPeriodStock(null);
+      return;
+    }
+    let alive = true;
+    const key = `${pickupDate}|${returnDate}`;
+    fetch(`/api/vehicles/${vehicleId}?pickupDate=${pickupDate}&returnDate=${returnDate}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive) setPeriodStock({ available: Number(d.vehicle?.availableUnits ?? 0), checked: key });
+      })
+      .catch(() => alive && setPeriodStock(null));
+    return () => {
+      alive = false;
+    };
+  }, [pickupDate, returnDate, vehicleId]);
+  const soldOutForPeriod = periodStock !== null && periodStock.available <= 0;
+
   const handleBook = () => {
+    if (soldOutForPeriod) return;
     const params = new URLSearchParams({ vehicleId });
     if (pickupDate) params.set("pickupDate", pickupDate);
     if (returnDate) params.set("returnDate", returnDate);
@@ -154,7 +181,7 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
   const dailyEUR = Math.round(dailyTND / 3.35);
   const rawDeposit = vehicle?.pricing?.deposit || vehicle?.deposit || 0;
   const depositTND = Math.round(rawDeposit / 100);
-  const availableCount = vehicle?.availableUnits ?? 3;
+  const availableCount = periodStock ? periodStock.available : vehicle?.availableUnits ?? 0;
   const categoryName = vehicle?.categoryId?.name?.[locale as "fr" | "en" | "ar"] || vehicle?.categoryId?.name?.fr || vehicle?.category || "Véhicule";
 
   const specLabels: Record<string, { fr: string; en: string; ar: string }> = {
@@ -212,17 +239,18 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="secondary">{categoryName}</Badge>
-                      <Badge
-                        variant="default"
-                        className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                      >
-                        ✓ {availableCount}{" "}
-                        {locale === "ar"
-                          ? "سيارات متوفرة"
-                          : locale === "en"
-                          ? "vehicles available"
-                          : "véhicules disponibles"}
-                      </Badge>
+                      {soldOutForPeriod ? (
+                        <Badge variant="default" className="bg-red-500/20 text-red-400 border border-red-500/30">
+                          {locale === "ar" ? "غير متاحة لهذه التواريخ" : locale === "en" ? "Not available for these dates" : "Indisponible pour ces dates"}
+                        </Badge>
+                      ) : availableCount > 0 ? (
+                        <Badge variant="default" className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                          ✓ {availableCount}{" "}
+                          {periodStock
+                            ? locale === "ar" ? "متوفرة لتواريخك" : locale === "en" ? "available for your dates" : "disponible(s) pour vos dates"
+                            : locale === "ar" ? "سيارات في الخدمة" : locale === "en" ? "cars in service" : "véhicule(s) en service"}
+                        </Badge>
+                      ) : null}
                     </div>
                     <h1 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold font-display text-white tracking-tight">
                       {vehicle.brand} <span className="text-amber-400">{vehicle.model}</span>
@@ -555,10 +583,10 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
 
                     <Button
                       onClick={handleBook}
-                      disabled={vehicle.status !== "available"}
+                      disabled={soldOutForPeriod || availableCount <= 0}
                       className="w-full h-12 text-base font-semibold bg-[#1D4ED8] hover:bg-[#1e40af] text-white rounded-xl"
                     >
-                      {vehicle.status === "available"
+                      {!soldOutForPeriod && availableCount > 0
                         ? locale === "fr" ? "Réserver maintenant" : locale === "ar" ? "احجز الآن" : "Book Now"
                         : locale === "fr" ? "Non disponible" : locale === "ar" ? "غير متاح" : "Unavailable"}
                       <ArrowRight className="ml-2 h-4 w-4" />

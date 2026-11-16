@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import connectDB from "./db";
 import Vehicle, { type IVehicleUnit } from "@/models/Vehicle";
 import Booking from "@/models/Booking";
+import { HOLDING_STATUSES, overlapFilter, reallyOverlaps } from "./bookingOverlap";
 
 /**
  * Physical fleet ("units"): one car model (Vehicle) owns N physical cars, each with its own
@@ -13,7 +14,7 @@ import Booking from "@/models/Booking";
  */
 
 /** Booking statuses that hold a physical car. "pending" is included so a fresh request already has a car. */
-export const UNIT_HOLDING_STATUSES = ["pending", "confirmed", "awaiting_payment", "paid", "active"];
+export const UNIT_HOLDING_STATUSES = HOLDING_STATUSES;
 
 type VehicleLike = {
   _id: mongoose.Types.ObjectId | string;
@@ -103,16 +104,12 @@ async function busyUnitIds(
   returnDate: Date,
   excludeBookingId?: string
 ): Promise<Set<string>> {
-  const query: Record<string, unknown> = {
-    bookingStatus: { $in: UNIT_HOLDING_STATUSES },
-    pickupDate: { $lt: returnDate },
-    returnDate: { $gt: pickupDate },
-    "assignedUnits.vehicleId": new mongoose.Types.ObjectId(vehicleId),
-  };
-  if (excludeBookingId && mongoose.Types.ObjectId.isValid(excludeBookingId)) {
-    query._id = { $ne: new mongoose.Types.ObjectId(excludeBookingId) };
-  }
-  const overlapping = await Booking.find(query).select("assignedUnits").lean();
+  // Same overlap rules as the stock engine (overdue rentals keep their car until returned).
+  const query = overlapFilter(pickupDate, returnDate, excludeBookingId);
+  query["assignedUnits.vehicleId"] = new mongoose.Types.ObjectId(vehicleId);
+  const overlapping = (
+    await Booking.find(query).select("assignedUnits pickupDate returnDate bookingStatus").lean()
+  ).filter((b) => reallyOverlaps(b, pickupDate, returnDate));
   const busy = new Set<string>();
   for (const b of overlapping) {
     for (const a of b.assignedUnits || []) {
