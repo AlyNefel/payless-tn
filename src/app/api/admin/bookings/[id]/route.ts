@@ -110,6 +110,16 @@ export async function PATCH(
     const body = await request.json();
 
     if (typeof body.action === "string") {
+      // A custom price for extra days is a pricing decision: reserved to roles allowed to edit prices.
+      if (body.dailyRateTND !== undefined && body.dailyRateTND !== null) {
+        const priceGuard = await requirePermission("pricing", "edit");
+        if (!priceGuard.ok) {
+          return NextResponse.json(
+            { success: false, error: "Votre rôle ne permet pas de modifier le prix. Le tarif standard s'applique.", code: "PRICE_NOT_ALLOWED" },
+            { status: 403 }
+          );
+        }
+      }
       return handleAction(id, body, session.user?.email || "Admin");
     }
 
@@ -125,12 +135,17 @@ export async function PATCH(
       return NextResponse.json({ error: parsed.error.issues[0]?.message || "Validation error" }, { status: 400 });
     }
 
-    const updates: Record<string, unknown> = { ...parsed.data };
-    // Never let the generic update overwrite computed / operational fields.
-    for (const k of ["pricingBreakdown", "assignedUnits", "auditHistory", "extensions", "bookingReference", "customerId"]) {
-      delete updates[k];
+    // Strict whitelist: amounts, options, deposit, customer and audit data can never be written
+    // through the generic update (prices are always recomputed by the server).
+    const EDITABLE = [
+      "paymentStatus", "internalNote", "internalNotes", "adminNotes", "vehicleId",
+      "pickupDate", "returnDate", "pickupTime", "returnTime", "actualPickupDate", "actualReturnDate",
+    ] as const;
+    const updates: Record<string, unknown> = {};
+    for (const k of EDITABLE) {
+      const v = (parsed.data as Record<string, unknown>)[k];
+      if (v !== undefined && (typeof v === "string" || typeof v === "number")) updates[k] = v;
     }
-    delete updates.vehicle;
     if (parsed.data.status) {
       updates.bookingStatus = parsed.data.status;
     }
