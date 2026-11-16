@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import { GlobalMinRentalCard } from "@/components/admin/GlobalMinRentalCard";
+import { GlobalSeasonsCard } from "@/components/admin/GlobalSeasonsCard";
 
 interface SeasonalPeriod {
   name: string;
@@ -249,6 +250,7 @@ export default function AdminPricingPage() {
 
 
       <GlobalMinRentalCard />
+      <GlobalSeasonsCard />
       {/* Search & Actions Bar */}
       <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div className="relative w-full sm:w-96">

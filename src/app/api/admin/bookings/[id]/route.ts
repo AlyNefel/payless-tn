@@ -10,6 +10,7 @@ import { withExtraIcons } from "@/lib/extrasServer";
 import mongoose from "mongoose";
 import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected } from "@/lib/extras";
 import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
+import { getRentalRules, priceSource } from "@/lib/rentalRules";
 import { getVehicleStockAvailability } from "@/lib/availability";
 import {
   assignUnitManually,
@@ -217,7 +218,7 @@ export async function PATCH(
             const veh = currentBooking.vehicleId as unknown as { pricing?: { daily: number } } | null;
             const iso = (d: Date) => new Date(d).toISOString().slice(0, 10);
             const subtotal = veh?.pricing
-              ? calculateSeasonalRentalTotal(veh, iso(mod.pickupDate), iso(mod.returnDate)).subtotal
+              ? calculateSeasonalRentalTotal(priceSource(veh, await getRentalRules()), iso(mod.pickupDate), iso(mod.returnDate)).subtotal
               : pb.subtotal;
             const extrasTotal = onlySelected(currentBooking.extras).reduce(
               (acc, ex) => acc + extraLineTotal(ex.price || 0, ex.quantity || 1, days, ex.pricingType),

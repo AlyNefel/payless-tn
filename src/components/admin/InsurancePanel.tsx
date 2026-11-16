@@ -186,10 +186,9 @@ export function InsurancePanel({ focusUnit }: { focusUnit?: string | null }) {
     try {
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("folder", "fleet");
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      const res = await fetch("/api/admin/documents", { method: "POST", body: fd });
       const d = await res.json().catch(() => ({}));
-      if (!res.ok || !d.url) throw new Error(d.error || "Téléversement impossible (image JPG/PNG uniquement)");
+      if (!res.ok || !d.url) throw new Error(d.error || "Téléversement impossible (PDF, JPG, PNG ou WebP — 8 Mo max)");
       setForm({ ...form, attachmentUrl: d.url });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Téléversement impossible");
@@ -394,12 +393,12 @@ export function InsurancePanel({ focusUnit }: { focusUnit?: string | null }) {
                   <input type="number" min={0} step="0.001" className={inputCls} value={form.costTND} onChange={(e) => setForm({ ...form, costTND: e.target.value })} /></label>
               </div>
               <div className="space-y-1">
-                <span className="font-semibold text-slate-600 dark:text-slate-300">Pièce jointe (photo du contrat ou lien)</span>
+                <span className="font-semibold text-slate-600 dark:text-slate-300">Pièce jointe (PDF ou photo du contrat, ou lien)</span>
                 <div className="flex gap-2">
                   <input className={inputCls} value={form.attachmentUrl} onChange={(e) => setForm({ ...form, attachmentUrl: e.target.value })} placeholder="https://…" />
                   <label className={`${btn.base} ${btn.secondary} h-10 cursor-pointer shrink-0`}>
-                    {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Photo
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
+                    {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} PDF / photo
+                    <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
                   </label>
                   {form.attachmentUrl && (
                     <button type="button" onClick={() => setForm({ ...form, attachmentUrl: "" })} aria-label="Retirer la pièce" className={`${btn.base} ${btn.secondary} h-10 px-2.5`}><Trash2 className="w-4 h-4" /></button>

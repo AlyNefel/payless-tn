@@ -10,6 +10,7 @@ import {
   X, CheckCircle, MapPin, Sparkles, Shield, Eye, Calendar,
   Check, ArrowRight, ExternalLink
 } from "lucide-react";
+import { addDays, useRentalRules } from "@/lib/useRentalRules";
 import { CarSpinner } from "@/components/ui/CarSpinner";
 import { VehicleImage } from "@/components/ui/VehicleImage";
 import {
@@ -31,6 +32,8 @@ interface Vehicle {
   images: { url: string; isPrimary?: boolean }[];
   status: string;
   pricing: { daily: number; currency: string; deposit?: number };
+  /** Price and minimum duration for the selected period, computed by the server. */
+  periodPricing?: { dailyRate: number; baseDailyRate: number; days: number | null; total: number | null; periodName: string; minDays: number; meetsMinimum: boolean };
   deposit?: number;
   features?: string[];
   hasAirConditioning?: boolean;
@@ -81,7 +84,15 @@ function VehiclesContent() {
   };
   const today = localDay(0);
   const [pickupDate, setPickupDate] = useState(searchParams.get("pickupDate") || localDay(1));
-  const [returnDate, setReturnDate] = useState(searchParams.get("returnDate") || localDay(4));
+  const [returnDateRaw, setReturnDate] = useState(searchParams.get("returnDate") || localDay(4));
+  // Fleet-wide rules (minimum duration, pricing periods), live from the back office.
+  const { rules, minDaysOn, periodFor } = useRentalRules();
+  const minDays = pickupDate ? minDaysOn(pickupDate) : 1;
+  const period = pickupDate ? periodFor(pickupDate) : null;
+  const minReturn = pickupDate ? addDays(pickupDate, minDays) : today;
+  // The return date is pushed forward when the chosen period is shorter than the minimum.
+  const returnDate = returnDateRaw && returnDateRaw < minReturn ? minReturn : returnDateRaw;
+  const rulesKey = JSON.stringify(rules);
   const datesValid = Boolean(pickupDate && returnDate && returnDate > pickupDate && pickupDate >= today);
 
   const updatePeriod = (nextPickup: string, nextReturn: string) => {
@@ -142,7 +153,9 @@ function VehiclesContent() {
     } finally {
       setLoading(false);
     }
-  }, [search, transmission, fuelType, seats, maxPrice, sortBy, pickupDate, returnDate, datesValid]);
+    // rulesKey: prices are re-read as soon as a fleet-wide rule changes in the back office.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, transmission, fuelType, seats, maxPrice, sortBy, pickupDate, returnDate, datesValid, rulesKey]);
 
   useEffect(() => {
     fetchVehicles();
@@ -169,7 +182,8 @@ function VehiclesContent() {
   };
 
   const getDailyTND = (v: Vehicle) => {
-    const raw = v.pricing?.daily || 8000;
+    // Rate in force for the selected period (seasonal / fleet-wide period), else the base rate.
+    const raw = v.periodPricing?.dailyRate || v.pricing?.daily || 8000;
     return raw > 1000 ? Math.round(raw / 100) : raw;
   };
 
@@ -254,12 +268,28 @@ function VehiclesContent() {
             </span>
             <input
               type="date"
-              min={pickupDate || today}
+              min={minReturn}
               value={returnDate}
               onChange={(e) => updatePeriod(pickupDate, e.target.value)}
               className="w-full px-3 py-2.5 rounded-xl border border-border dark:border-neutral-800 bg-white dark:bg-black text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
           </label>
+          {datesValid && (minDays > 1 || period) && (
+            <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 sm:self-center" role="status">
+              {period ? `${period.name} · ` : ""}
+              {minDays > 1
+                ? locale === "fr"
+                  ? `Durée minimale : ${minDays} jours`
+                  : locale === "ar"
+                  ? `الحد الأدنى: ${minDays} أيام`
+                  : `Minimum: ${minDays} days`
+                : locale === "fr"
+                ? "Tarif de la période appliqué"
+                : locale === "ar"
+                ? "تعريفة الفترة مطبقة"
+                : "Period rate applies"}
+            </p>
+          )}
           {!datesValid && (
             <p className="text-xs font-semibold text-red-600 sm:self-center">
               {locale === "fr" ? "Choisissez une période valide (à partir d'aujourd'hui)." : locale === "ar" ? "اختر فترة صحيحة." : "Choose a valid period (from today)."}
@@ -507,6 +537,13 @@ function VehiclesContent() {
                               TND / {locale === "ar" ? "يوم" : locale === "en" ? "day" : "jour"}
                             </span>
                           </div>
+                          {v.periodPricing?.total ? (
+                            <div className="text-[11px] font-bold text-foreground">
+                              {Math.round(v.periodPricing.total / 100)} TND · {v.periodPricing.days}{" "}
+                              {locale === "ar" ? "أيام" : locale === "en" ? "days" : "jours"}
+                              {v.periodPricing.periodName ? ` · ${v.periodPricing.periodName}` : ""}
+                            </div>
+                          ) : null}
                           <div className="text-[11px] text-muted-foreground">
                             ≈ {dailyEUR} € · {locale === "ar" ? "الوديعة:" : locale === "en" ? "Deposit:" : "Caution:"} {depositTND} TND
                           </div>
@@ -525,13 +562,19 @@ function VehiclesContent() {
                             <span>{locale === "fr" ? "Détails" : locale === "ar" ? "تفاصيل" : "Details"}</span>
                           </button>
 
-                          <Link
-                            href={bookingHref(v._id)}
-                            className="px-4 py-2 text-xs font-bold rounded-xl text-black shadow-md hover:shadow-amber-500/20 hover:scale-102 transition-all"
-                            style={{ background: "linear-gradient(135deg, #d4af37, #f5c842)" }}
-                          >
-                            {locale === "fr" ? "Réserver" : locale === "ar" ? "احجز" : "Book"}
-                          </Link>
+                          {v.periodPricing && !v.periodPricing.meetsMinimum ? (
+                            <span className="px-3 py-2 text-[11px] font-bold rounded-xl bg-muted dark:bg-neutral-800 text-muted-foreground text-center">
+                              {locale === "fr" ? `Min. ${v.periodPricing.minDays} jours` : locale === "ar" ? `الحد الأدنى ${v.periodPricing.minDays} أيام` : `Min. ${v.periodPricing.minDays} days`}
+                            </span>
+                          ) : (
+                            <Link
+                              href={bookingHref(v._id)}
+                              className="px-4 py-2 text-xs font-bold rounded-xl text-black shadow-md hover:shadow-amber-500/20 hover:scale-102 transition-all"
+                              style={{ background: "linear-gradient(135deg, #d4af37, #f5c842)" }}
+                            >
+                              {locale === "fr" ? "Réserver" : locale === "ar" ? "احجز" : "Book"}
+                            </Link>
+                          )}
                         </div>
                       </div>
                     </div>

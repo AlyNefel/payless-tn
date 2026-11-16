@@ -298,9 +298,15 @@ export async function syncBookingAssignment(
     if (have >= count) continue;
     const units = await unitsOf(modelId);
     const busy = await busyUnitIds(modelId, booking.pickupDate, booking.returnDate, bookingId);
+    // Cars returned or leaving the same day as this rental are used last: fewer tight hand-overs.
+    const tight = await sameDayNeighbours(bookingId, modelId, booking.pickupDate, booking.returnDate);
+    const tightUnits = new Set(tight.map((t) => t.unitId));
     const candidates = units
       .filter((u) => u.status === "active" && !busy.has(String(u._id)) && !usedUnits.has(String(u._id)))
-      .sort((x, y) => (x.mileage || 0) - (y.mileage || 0));
+      .sort(
+        (x, y) =>
+          Number(tightUnits.has(String(x._id))) - Number(tightUnits.has(String(y._id))) || (x.mileage || 0) - (y.mileage || 0)
+      );
     for (const unit of candidates) {
       if (have >= count) break;
       const uid = String(unit._id);
@@ -325,11 +331,102 @@ export async function syncBookingAssignment(
   });
 
   await Booking.updateOne({ _id: bId }, { $set: { assignedUnits: kept } });
+  await notifySameDayTurnover(booking, kept, unitsCache).catch((e) => console.error("notifySameDayTurnover:", e));
   return {
     assigned: kept.map((a) => ({ vehicleId: String(a.vehicleId), unitId: a.unitId ? String(a.unitId) : undefined, licensePlate: a.licensePlate })),
     dropped,
     unassigned,
   };
+}
+
+const utcDay = (d: Date | string) => new Date(d).toISOString().slice(0, 10);
+
+/**
+ * Bookings of the same model that END on this rental's pickup day or START on its return day.
+ * Same-day return → departure is allowed (the manager coordinates), these are the hand-overs to watch.
+ */
+async function sameDayNeighbours(
+  bookingId: string,
+  modelId: string,
+  pickup: Date,
+  ret: Date
+): Promise<{ unitId: string; kind: "before" | "after"; reference: string; time: string }[]> {
+  const dayRange = (d: Date) => {
+    const start = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    return { $gte: start, $lt: new Date(start.getTime() + 86_400_000) };
+  };
+  const mId = new mongoose.Types.ObjectId(modelId);
+  const others = await Booking.find({
+    _id: { $ne: new mongoose.Types.ObjectId(bookingId) },
+    bookingStatus: { $in: HOLDING_STATUSES },
+    "assignedUnits.vehicleId": mId,
+    $or: [{ returnDate: dayRange(new Date(pickup)) }, { pickupDate: dayRange(new Date(ret)) }],
+  })
+    .select("bookingReference pickupDate returnDate pickupTime returnTime assignedUnits")
+    .lean();
+  const out: { unitId: string; kind: "before" | "after"; reference: string; time: string }[] = [];
+  for (const o of others) {
+    const before = utcDay(o.returnDate) === utcDay(pickup);
+    const after = utcDay(o.pickupDate) === utcDay(ret);
+    for (const a of o.assignedUnits || []) {
+      if (!a.unitId || String(a.vehicleId) !== modelId) continue;
+      if (before) out.push({ unitId: String(a.unitId), kind: "before", reference: o.bookingReference, time: o.returnTime || "" });
+      if (after) out.push({ unitId: String(a.unitId), kind: "after", reference: o.bookingReference, time: o.pickupTime || "" });
+    }
+  }
+  return out;
+}
+
+/**
+ * Tells the team when one physical car is returned and leaves again on the same day
+ * (one alert per car and per day). Past days are ignored.
+ */
+async function notifySameDayTurnover(
+  booking: { _id: mongoose.Types.ObjectId; bookingReference: string; pickupDate: Date; returnDate: Date; pickupTime?: string; returnTime?: string },
+  kept: { vehicleId: mongoose.Types.ObjectId; unitId?: mongoose.Types.ObjectId }[],
+  unitsCache: Map<string, IVehicleUnit[]>
+): Promise<void> {
+  const today = utcDay(new Date());
+  const { notifyStaff } = await import("./notify");
+  for (const k of kept) {
+    if (!k.unitId) continue;
+    const modelId = String(k.vehicleId);
+    const uid = String(k.unitId);
+    const neighbours = (await sameDayNeighbours(String(booking._id), modelId, booking.pickupDate, booking.returnDate)).filter((n) => n.unitId === uid);
+    if (neighbours.length === 0) continue;
+    const units = unitsCache.get(modelId) || [];
+    const index = units.findIndex((u) => String(u._id) === uid);
+    const model = await Vehicle.findById(modelId).select("brand model").lean();
+    const car = `${model?.brand || ""} ${model?.model || ""} — ${unitLabel(units[index], index >= 0 ? index : undefined)}`.trim();
+    for (const n of neighbours) {
+      const day = n.kind === "before" ? utcDay(booking.pickupDate) : utcDay(booking.returnDate);
+      if (day < today) continue;
+      const returning = n.kind === "before" ? { ref: n.reference, time: n.time } : { ref: booking.bookingReference, time: booking.returnTime || "" };
+      const leaving = n.kind === "before" ? { ref: booking.bookingReference, time: booking.pickupTime || "" } : { ref: n.reference, time: n.time };
+      // Return planned after the next departure: the hand-over cannot work without action.
+      const late = Boolean(returning.time && leaving.time && returning.time > leaving.time);
+      const dayFr = new Date(`${day}T12:00:00Z`).toLocaleDateString("fr-FR", { timeZone: "UTC" });
+      const detail = `retour ${returning.ref}${returning.time ? ` à ${returning.time}` : ""}, départ ${leaving.ref}${leaving.time ? ` à ${leaving.time}` : ""}`;
+      await notifyStaff({
+        type: "same_day_turnover",
+        category: "booking",
+        severity: late ? "critical" : "warning",
+        title: {
+          fr: `${late ? "Retour APRÈS le départ suivant" : "Retour et départ le même jour"} — ${dayFr}`,
+          en: `${late ? "Return AFTER the next departure" : "Same-day return and departure"} — ${day}`,
+          ar: `${late ? "الإرجاع بعد موعد الانطلاق التالي" : "إرجاع وانطلاق في نفس اليوم"} — ${day}`,
+        },
+        message: {
+          fr: `${car} : ${detail}. À coordonner.`,
+          en: `${car}: return ${returning.ref}${returning.time ? ` at ${returning.time}` : ""}, departure ${leaving.ref}${leaving.time ? ` at ${leaving.time}` : ""}. Needs coordination.`,
+          ar: `${car}: ${detail}`,
+        },
+        link: `/admin/calendar?model=${modelId}`,
+        data: { unitId: uid, day, returning: returning.ref, leaving: leaving.ref, late },
+        dedupeKey: `turnover:${uid}:${day}:${returning.ref}:${leaving.ref}:${returning.time}-${leaving.time}`,
+      });
+    }
+  }
 }
 
 /** Back-compat names used across the API. */

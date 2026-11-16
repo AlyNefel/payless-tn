@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { z } from "zod";
 import connectDB from "@/lib/db";
-import { InsurancePolicy, Vehicle } from "@/models";
+import { InsurancePolicy, StoredFile, Vehicle } from "@/models";
 import { requirePermission } from "@/lib/permissions";
 import { ensureAllUnits, unitLabel } from "@/lib/fleetUnits";
 import { runFleetAlerts } from "@/lib/notify";
@@ -100,6 +100,14 @@ async function checkCar(vehicleId: string, unitId: string) {
   return Boolean(await Vehicle.exists({ _id: vehicleId, "units._id": unitId }));
 }
 
+/** Deletes the private document behind an attachment URL once no policy uses it any more. */
+async function dropAttachment(url: string | undefined | null) {
+  const m = /^\/api\/admin\/documents\/([a-f0-9]{24})$/.exec(String(url || ""));
+  if (!m) return;
+  if (await InsurancePolicy.exists({ attachmentUrl: url })) return;
+  await StoredFile.deleteOne({ _id: m[1] });
+}
+
 /** Create a policy — or renew one ({ renewFrom: <policyId> }): the old policy is closed, history is kept. */
 export async function POST(request: NextRequest) {
   const guard = await requirePermission("garage", "edit");
@@ -143,7 +151,7 @@ export async function PUT(request: NextRequest) {
   const policy = await InsurancePolicy.findById(id);
   if (!policy) return NextResponse.json({ success: false, error: "Contrat introuvable" }, { status: 404 });
   if (!(await checkCar(d.vehicleId, d.unitId))) return NextResponse.json({ success: false, error: "Véhicule introuvable" }, { status: 404 });
-  const previous = { vehicleId: policy.vehicleId, unitId: policy.unitId };
+  const previous = { vehicleId: policy.vehicleId, unitId: policy.unitId, attachmentUrl: policy.attachmentUrl };
   Object.assign(policy, {
     vehicleId: d.vehicleId,
     unitId: d.unitId,
@@ -156,6 +164,7 @@ export async function PUT(request: NextRequest) {
     notes: d.notes,
   });
   await policy.save();
+  if (previous.attachmentUrl !== d.attachmentUrl) await dropAttachment(previous.attachmentUrl);
   await syncUnitInsurance(d.vehicleId, d.unitId);
   if (String(previous.unitId) !== d.unitId) await syncUnitInsurance(previous.vehicleId, previous.unitId);
   runFleetAlerts({ force: true }).catch(() => {});
@@ -170,6 +179,7 @@ export async function DELETE(request: NextRequest) {
   await connectDB();
   const policy = await InsurancePolicy.findByIdAndDelete(id);
   if (!policy) return NextResponse.json({ success: false, error: "Contrat introuvable" }, { status: 404 });
+  await dropAttachment(policy.attachmentUrl);
   // A policy that was replaced by the deleted one becomes current again.
   await InsurancePolicy.updateMany({ renewedBy: policy._id }, { $unset: { renewedBy: 1 } });
   await syncUnitInsurance(policy.vehicleId, policy.unitId);
