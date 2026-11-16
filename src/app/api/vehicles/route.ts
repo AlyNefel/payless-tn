@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import { Vehicle, VehicleCategory } from "@/models";
-import { getFleetStockMap, getUnavailableVehicleIds } from "@/lib/availability";
+import { getFleetStockMap, stockWithoutDates } from "@/lib/availability";
 import { sanitizeVehicleForClient } from "@/lib/sanitize";
 import { escapeRegex, isStaffRequest } from "@/lib/apiAuth";
 import mongoose from "mongoose";
@@ -241,12 +241,8 @@ export async function GET(request: NextRequest) {
     // Format & Enrich with stock counters, and sanitize for non-admin
     const processedVehicles = vehicles.map((v: any) => {
       const vId = v._id.toString();
-      const stock = fleetStockMap[vId] || {
-        totalUnits: Math.max(1, v.totalUnits || 3),
-        bookedUnits: 0,
-        availableUnits: Math.max(1, v.availableUnits || v.totalUnits || 3),
-        isAvailable: v.status === "available",
-      };
+      // With a date window: exact stock for that window. Without: cars currently in service.
+      const stock = fleetStockMap[vId] || stockWithoutDates(v);
 
       const minDays = effectiveMinDays(v, globalMinDays);
       const enriched = {

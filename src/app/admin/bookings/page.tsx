@@ -794,9 +794,14 @@ export default function AdminBookingsPage() {
                   <p className="font-semibold text-slate-700">Signature du Client:</p>
                   <div className="h-14 border-b border-dashed border-slate-400 mt-2"></div>
                 </div>
-                <div>
+                <div className="text-right">
                   <p className="font-semibold text-slate-700">Cachet & Signature Agence:</p>
-                  <div className="h-14 border-b border-dashed border-slate-400 mt-2"></div>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- printed voucher, local asset */}
+                  <img
+                    src="/brand/cachet-signature.png"
+                    alt="Cachet et signature de Houimli Rent a Car SARL"
+                    className="ml-auto mt-1 h-28 w-auto"
+                  />
                 </div>
               </div>
 

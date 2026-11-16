@@ -1,5 +1,27 @@
 import { jsPDF } from "jspdf";
 import { extraLineTotal } from "@/lib/extras";
+import { STAMP_SIGNATURE_PNG, STAMP_SIGNATURE_RATIO } from "@/lib/brandAssets";
+
+/** Brand palette (matches the website: deep navy, Payless blue, amber accent). */
+type RGB = [number, number, number];
+const NAVY: RGB = [11, 31, 75];
+const BLUE: RGB = [29, 78, 216];
+const AMBER: RGB = [245, 179, 1];
+const TINT: RGB = [238, 243, 255];
+const BORDER: RGB = [203, 213, 225];
+const INK: RGB = [15, 23, 42];
+const MUTED: RGB = [71, 85, 105];
+
+const STATUS_LABELS: Record<string, string> = {
+  pending: "EN ATTENTE",
+  confirmed: "CONFIRMÉE",
+  awaiting_payment: "PAIEMENT ATTENDU",
+  paid: "PAYÉE",
+  active: "EN COURS",
+  completed: "CLÔTURÉE",
+  cancelled: "ANNULÉE",
+  rejected: "REFUSÉE",
+};
 
 export interface PDFExtraItem {
   name: string;
@@ -56,20 +78,23 @@ export interface PDFBookingData {
   agencyEmail?: string;
   agencyAddress?: string;
   createdAt?: string;
+  /** Booking status shown in the header (defaults to "confirmed"). */
+  bookingStatus?: string;
+  /** Physical car(s) assigned (shown to the customer on the voucher). */
+  licensePlates?: string;
 }
 
 /**
- * Generates an executive Black & White invoice / booking voucher in structured table view.
- * Complies with strict black & white accounting aesthetics:
- * - High contrast, monochrome elegance
- * - Clear table grids with column headers
- * - No sensitive data (no license plate, no vehicle year for clients)
+ * Booking voucher ("Bon de réservation") in the agency colours, with the agency stamp and
+ * signature at the bottom right and a customer signature box at the bottom left.
  */
 export function generateBookingPDF(data: PDFBookingData): Buffer {
   const doc = new jsPDF({
     orientation: "portrait",
     unit: "mm",
     format: "a4",
+    // Deflate streams: keeps the voucher light enough for email / WhatsApp.
+    compress: true,
   });
 
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -82,77 +107,72 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   const agencyPhone = data.agencyPhone || "+216 80 80 80 80";
   const agencyEmail = data.agencyEmail || "contact@paylesscarrental.tn";
   const agencyAddress = data.agencyAddress || "60, Avenue de l'UMA, Chotrana 1, La Soukra, Ariana";
-  const formattedDate = data.createdAt
-    ? new Date(data.createdAt).toLocaleDateString("fr-FR")
-    : new Date().toLocaleDateString("fr-FR");
+  // createdAt may arrive already formatted ("16/11/2026"): never re-parse it into "Invalid Date".
+  const parsedCreated = data.createdAt ? new Date(data.createdAt) : new Date();
+  const formattedDate =
+    data.createdAt && Number.isNaN(parsedCreated.getTime())
+      ? data.createdAt
+      : parsedCreated.toLocaleDateString("fr-FR");
 
   // ==========================================
   // 1. TOP HEADER & INVOICE META TABLE
   // ==========================================
   let y = 14;
 
+  // Navy header band with amber accent line
+  doc.setFillColor(...NAVY);
+  doc.rect(0, 0, pageWidth, 44, "F");
+  doc.setFillColor(...AMBER);
+  doc.rect(0, 44, pageWidth, 1.4, "F");
+
   // Left Side: Company Identity
-  doc.setTextColor(0, 0, 0);
+  doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
+  doc.setFontSize(17);
   doc.text(agencyName, marginLeft, y + 5);
 
   doc.setFontSize(8.5);
   doc.setFont("helvetica", "normal");
-  doc.setTextColor(50, 50, 50);
+  doc.setTextColor(203, 213, 255);
   doc.text("HOUIMLI RENT A CAR SARL — Location de Véhicules Touristiques", marginLeft, y + 10.5);
-  doc.text(`Adresse : ${agencyAddress}`, marginLeft, y + 15);
+  doc.text(`Adresse : ${agencyAddress}`, marginLeft, y + 15, { maxWidth: 104 });
   doc.text(`Tél : ${agencyPhone}  |  Email : ${agencyEmail}`, marginLeft, y + 19.5);
   doc.text("Matricule Fiscale : 1678942/A/P/000  |  Code TVA : 1678942 A", marginLeft, y + 24);
 
-  // Right Side: Professional Invoice Meta Box (Table format)
+  // Right Side: white meta card on the band
   const metaBoxWidth = 72;
   const metaBoxX = pageWidth - marginRight - metaBoxWidth;
-  const metaBoxY = y;
+  const metaBoxY = y - 4;
 
-  // Header of Meta Box (Solid Black with White Text)
-  doc.setFillColor(0, 0, 0);
-  doc.rect(metaBoxX, metaBoxY, metaBoxWidth, 7, "F");
-  doc.setTextColor(255, 255, 255);
+  doc.setFillColor(255, 255, 255);
+  doc.roundedRect(metaBoxX, metaBoxY, metaBoxWidth, 32, 2, 2, "F");
+  doc.setFillColor(...AMBER);
+  doc.roundedRect(metaBoxX, metaBoxY, metaBoxWidth, 8, 2, 2, "F");
+  doc.rect(metaBoxX, metaBoxY + 5, metaBoxWidth, 3, "F");
+  doc.setTextColor(...NAVY);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.5);
-  doc.text("BON DE RÉSERVATION", metaBoxX + metaBoxWidth / 2, metaBoxY + 5, { align: "center" });
-
-  // Body of Meta Box (Bordered Table Grid)
-  doc.setDrawColor(0, 0, 0);
-  doc.setLineWidth(0.3);
-  doc.rect(metaBoxX, metaBoxY + 7, metaBoxWidth, 21, "D");
+  doc.setFontSize(9.5);
+  doc.text("BON DE RÉSERVATION", metaBoxX + metaBoxWidth / 2, metaBoxY + 5.6, { align: "center" });
 
   doc.setFontSize(8);
-  doc.setTextColor(0, 0, 0);
+  doc.setTextColor(...INK);
+  const metaRow = (label: string, value: string, ry: number, bold = false) => {
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...MUTED);
+    doc.text(label, metaBoxX + 3, ry);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(...(bold ? BLUE : INK));
+    doc.text(value, metaBoxX + metaBoxWidth - 3, ry, { align: "right" });
+  };
+  metaRow("N° Réf :", data.bookingReference, metaBoxY + 14, true);
+  doc.setDrawColor(...BORDER);
+  doc.setLineWidth(0.2);
+  doc.line(metaBoxX + 2, metaBoxY + 16, metaBoxX + metaBoxWidth - 2, metaBoxY + 16);
+  metaRow("Date d'émission :", formattedDate, metaBoxY + 21);
+  doc.line(metaBoxX + 2, metaBoxY + 23, metaBoxX + metaBoxWidth - 2, metaBoxY + 23);
+  metaRow("Statut :", STATUS_LABELS[data.bookingStatus || "confirmed"] || "CONFIRMÉE", metaBoxY + 28);
 
-  // Row 1: Reference
-  doc.setFont("helvetica", "bold");
-  doc.text("N° Réf :", metaBoxX + 3, metaBoxY + 12);
-  doc.setFont("helvetica", "bold");
-  doc.text(data.bookingReference, metaBoxX + metaBoxWidth - 3, metaBoxY + 12, { align: "right" });
-  doc.setDrawColor(210, 210, 210);
-  doc.line(metaBoxX, metaBoxY + 14, metaBoxX + metaBoxWidth, metaBoxY + 14);
-
-  // Row 2: Date
-  doc.setFont("helvetica", "normal");
-  doc.text("Date d'émission :", metaBoxX + 3, metaBoxY + 18.5);
-  doc.text(formattedDate, metaBoxX + metaBoxWidth - 3, metaBoxY + 18.5, { align: "right" });
-  doc.line(metaBoxX, metaBoxY + 21, metaBoxX + metaBoxWidth, metaBoxY + 21);
-
-  // Row 3: Status
-  doc.setFont("helvetica", "bold");
-  doc.text("Statut :", metaBoxX + 3, metaBoxY + 25);
-  doc.text("CONFIRMÉE (Auto)", metaBoxX + metaBoxWidth - 3, metaBoxY + 25, { align: "right" });
-
-  y += 30;
-
-  // Horizontal divider rule
-  doc.setDrawColor(0, 0, 0);
-  doc.setLineWidth(0.6);
-  doc.line(marginLeft, y, pageWidth - marginRight, y);
-
-  y += 5;
+  y = 51;
 
   // ==========================================
   // 2. TWO-COLUMN TABLE: CLIENT & VEHICLE
@@ -161,18 +181,18 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   const colHeight = 32;
 
   // --- Left Table: Client / Driver ---
-  doc.setFillColor(0, 0, 0);
+  doc.setFillColor(...BLUE);
   doc.rect(marginLeft, y, colWidth, 6, "F");
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
   doc.text("1. INFORMATIONS DU CONDUCTEUR", marginLeft + 3, y + 4.2);
 
-  doc.setDrawColor(0, 0, 0);
+  doc.setDrawColor(...BORDER);
   doc.setLineWidth(0.3);
   doc.rect(marginLeft, y + 6, colWidth, colHeight - 6, "D");
 
-  doc.setTextColor(0, 0, 0);
+  doc.setTextColor(...INK);
   doc.setFontSize(8);
 
   const leftY = y + 10.5;
@@ -207,7 +227,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
 
   // --- Right Table: Vehicle Info ---
   const rightX = marginLeft + colWidth + 4;
-  doc.setFillColor(0, 0, 0);
+  doc.setFillColor(...BLUE);
   doc.rect(rightX, y, colWidth, 6, "F");
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
@@ -221,11 +241,11 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
     y + 4.2
   );
 
-  doc.setDrawColor(0, 0, 0);
+  doc.setDrawColor(...BORDER);
   doc.setLineWidth(0.3);
   doc.rect(rightX, y + 6, colWidth, colHeight - 6, "D");
 
-  doc.setTextColor(0, 0, 0);
+  doc.setTextColor(...INK);
   const rightY = y + 10.5;
 
   doc.setFont("helvetica", "bold");
@@ -238,9 +258,9 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   doc.text(vehicleNameText, rightX + 28, rightY, { maxWidth: colWidth - 30 });
 
   doc.setFont("helvetica", "bold");
-  doc.text("Catégorie :", rightX + 3, rightY + 5);
+  doc.text(data.licensePlates ? "Immatriculation :" : "Catégorie :", rightX + 3, rightY + 5);
   doc.setFont("helvetica", "normal");
-  doc.text("Économique / Standard Garantie", rightX + 28, rightY + 5);
+  doc.text(data.licensePlates || "Économique / Standard Garantie", rightX + 28, rightY + 5, { maxWidth: colWidth - 30 });
 
   doc.setFont("helvetica", "bold");
   doc.text("Durée facturée :", rightX + 3, rightY + 10);
@@ -274,7 +294,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   const VALUE_MAX_W = halfWidth - LABEL_W - 6; // remaining for value text
 
   // Headers (Solid Black with White Text)
-  doc.setFillColor(0, 0, 0);
+  doc.setFillColor(...BLUE);
   doc.rect(marginLeft, y, halfWidth, ITIN_HEADER_H, "F");
   doc.rect(marginLeft + halfWidth + 4, y, halfWidth, ITIN_HEADER_H, "F");
 
@@ -285,19 +305,19 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   doc.text("4. RESTITUTION DU VÉHICULE", marginLeft + halfWidth + 7, y + 4.2);
 
   // Bordered Content Boxes
-  doc.setDrawColor(0, 0, 0);
+  doc.setDrawColor(...BORDER);
   doc.setLineWidth(0.3);
   doc.rect(marginLeft, y + ITIN_HEADER_H, halfWidth, itinBodyH, "D");
   doc.rect(marginLeft + halfWidth + 4, y + ITIN_HEADER_H, halfWidth, itinBodyH, "D");
 
   // Inner horizontal divider between row A and row B
   const innerDivY = y + ITIN_HEADER_H + ITIN_ROW_H;
-  doc.setDrawColor(200, 200, 200);
+  doc.setDrawColor(...BORDER);
   doc.setLineWidth(0.2);
   doc.line(marginLeft + 1, innerDivY, marginLeft + halfWidth - 1, innerDivY);
   doc.line(marginLeft + halfWidth + 5, innerDivY, marginLeft + halfWidth + 4 + halfWidth - 1, innerDivY);
 
-  doc.setTextColor(0, 0, 0);
+  doc.setTextColor(...INK);
   doc.setFontSize(8);
 
   // ---- Left column: Prise en charge ----
@@ -347,7 +367,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   const col4X = col3X + col3W;
 
   // Table Header
-  doc.setFillColor(0, 0, 0);
+  doc.setFillColor(...BLUE);
   doc.rect(marginLeft, y, contentWidth, 7, "F");
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
@@ -514,12 +534,12 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
 
     // Alternating rows in white and very light grey
     if (index % 2 === 1) {
-      doc.setFillColor(247, 247, 247);
+      doc.setFillColor(...TINT);
       doc.rect(marginLeft, y, contentWidth, rowHeight, "F");
     }
 
     // Outer and inner borders
-    doc.setDrawColor(215, 215, 215);
+    doc.setDrawColor(...BORDER);
     doc.setLineWidth(0.2);
     doc.line(marginLeft, y + rowHeight, marginLeft + contentWidth, y + rowHeight);
 
@@ -529,7 +549,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
     doc.line(col4X, y, col4X, y + rowHeight);
 
     // Text cells
-    doc.setTextColor(0, 0, 0);
+    doc.setTextColor(...INK);
     doc.setFont("helvetica", "normal");
     const textY = y + rowHeight / 2 - ((descriptionLines.length - 1) * rowLineHeight) / 2 + 1.2;
     doc.text(descriptionLines, col1X + 3, textY);
@@ -542,7 +562,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   });
 
   // Table outer border
-  doc.setDrawColor(0, 0, 0);
+  doc.setDrawColor(...BORDER);
   doc.setLineWidth(0.3);
   doc.rect(marginLeft, tableStartY, contentWidth, y - tableStartY, "D");
 
@@ -555,9 +575,9 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   const totalBoxX = pageWidth - marginRight - totalBoxWidth;
 
   // TOTAL TTC ROW (SOLID BLACK BACKGROUND WITH WHITE TEXT)
-  doc.setFillColor(0, 0, 0);
+  doc.setFillColor(...NAVY);
   doc.rect(totalBoxX, y, totalBoxWidth, 9, "F");
-  doc.setDrawColor(0, 0, 0);
+  doc.setDrawColor(...BORDER);
   doc.setLineWidth(0.3);
   doc.rect(totalBoxX, y, totalBoxWidth, 9, "D");
 
@@ -565,6 +585,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.text("TOTAL NET TTC À PAYER :", totalBoxX + 3, y + 6);
+  doc.setTextColor(...AMBER);
   doc.setFontSize(11);
   doc.text(`${(data.totalAmount / 100).toFixed(2)} ${currency}`, totalBoxX + totalBoxWidth - 3, y + 6.2, {
     align: "right",
@@ -574,12 +595,13 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
 
   // Deposit note (Bordered Table Row)
   if (data.depositAmount && data.depositAmount > 0) {
-    doc.setDrawColor(0, 0, 0);
+    doc.setFillColor(255, 248, 225);
+    doc.setDrawColor(...AMBER);
     doc.setLineWidth(0.3);
-    doc.rect(marginLeft, y, contentWidth, 7, "D");
+    doc.rect(marginLeft, y, contentWidth, 7, "FD");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
-    doc.setTextColor(0, 0, 0);
+    doc.setTextColor(...INK);
     doc.text(
       `Dépôt de garantie / Caution : ${(data.depositAmount / 100).toFixed(2)} ${currency} (empreinte bancaire non débitée, restituée au retour) ou par Cash.`,
       marginLeft + 3,
@@ -594,18 +616,19 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   // 5. TERMS & CONDITIONS (BORDERED TABLE)
   // ==========================================
   const termsBoxHeight = 24;
-  doc.setDrawColor(0, 0, 0);
+  doc.setDrawColor(...BORDER);
   doc.setLineWidth(0.3);
   doc.rect(marginLeft, y, contentWidth, termsBoxHeight, "D");
 
   // Title of terms
-  doc.setFillColor(240, 240, 240);
+  doc.setFillColor(...TINT);
   doc.rect(marginLeft, y, contentWidth, 5, "F");
   doc.line(marginLeft, y + 5, marginLeft + contentWidth, y + 5);
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.5);
-  doc.setTextColor(0, 0, 0);
+  doc.setTextColor(...INK);
+  doc.setTextColor(...NAVY);
   doc.text("CONDITIONS GÉNÉRALES & PIÈCES EXIGÉES LORS DU DÉPART :", marginLeft + 3, y + 3.7);
 
   doc.setFont("helvetica", "normal");
@@ -637,21 +660,62 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   y += termsBoxHeight + 5;
 
   // ==========================================
-  // 6. FOOTER
+  // 6. SIGNATURES — customer (left) / agency stamp & signature (right)
   // ==========================================
-  doc.setDrawColor(0, 0, 0);
-  doc.setLineWidth(0.2);
-  doc.line(marginLeft, pageHeight - 11, pageWidth - marginRight, pageHeight - 11);
+  const stampW = 62;
+  const stampH = stampW / STAMP_SIGNATURE_RATIO;
+  const blockH = stampH + 7;
+  const footerTop = pageHeight - 13;
+  if (y + blockH > footerTop) {
+    doc.addPage();
+    y = 16;
+  }
+  // Anchor the block at the bottom of the page for a consistent look.
+  const blockY = Math.max(y, footerTop - blockH - 2);
 
-  doc.setFontSize(6.5);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...NAVY);
+  doc.text("BON POUR ACCORD — LE CLIENT", marginLeft, blockY + 3);
+  doc.setDrawColor(...BORDER);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(marginLeft, blockY + 5, 70, stampH - 2, 2, 2, "D");
   doc.setFont("helvetica", "normal");
-  doc.setTextColor(80, 80, 80);
-  doc.text(
-    `Document généré le ${new Date().toLocaleString("fr-FR")} | ${agencyName} — Houimli Rent a Car SARL | Page 1/1`,
-    pageWidth / 2,
-    pageHeight - 7,
-    { align: "center" }
-  );
+  doc.setFontSize(6.5);
+  doc.setTextColor(...MUTED);
+  doc.text("Signature précédée de « Lu et approuvé »", marginLeft + 3, blockY + stampH);
+
+  const stampX = pageWidth - marginRight - stampW;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...NAVY);
+  doc.text("CACHET & SIGNATURE DE L'AGENCE", stampX + stampW, blockY + 3, { align: "right" });
+  try {
+    doc.addImage(STAMP_SIGNATURE_PNG, "PNG", stampX, blockY + 5, stampW, stampH, "agency-stamp", "SLOW");
+  } catch (err) {
+    console.error("Stamp image could not be embedded:", err);
+  }
+
+  // ==========================================
+  // 7. FOOTER (every page)
+  // ==========================================
+  const pages = doc.getNumberOfPages();
+  for (let pg = 1; pg <= pages; pg++) {
+    doc.setPage(pg);
+    doc.setFillColor(...NAVY);
+    doc.rect(0, pageHeight - 10, pageWidth, 10, "F");
+    doc.setFillColor(...AMBER);
+    doc.rect(0, pageHeight - 10, pageWidth, 0.8, "F");
+    doc.setFontSize(6.5);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(203, 213, 255);
+    doc.text(
+      `Document généré le ${new Date().toLocaleString("fr-FR")} | ${agencyName} — Houimli Rent a Car SARL | Page ${pg}/${pages}`,
+      pageWidth / 2,
+      pageHeight - 4,
+      { align: "center" }
+    );
+  }
 
   const arrayBuffer = doc.output("arraybuffer");
   return Buffer.from(arrayBuffer);
