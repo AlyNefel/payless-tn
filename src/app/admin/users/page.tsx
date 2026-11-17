@@ -210,7 +210,7 @@ export default function UsersPage() {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-            <Users className="w-6 h-6 text-blue-600" /> {roleFilter === "worker" ? "Agents d'assistance" : "Utilisateurs"}
+            <Users className="w-6 h-6 text-blue-600" /> {roleFilter === "worker" ? "Agents d'assistance" : roleFilter === "accountant" ? "Comptables" : "Utilisateurs"}
           </h1>
           <p className="text-xs text-slate-500 mt-1">
             Comptes du back-office. Les droits de chaque rôle se règlent dans{" "}
@@ -222,7 +222,7 @@ export default function UsersPage() {
         </div>
         {can("users.create") && (
           <button type="button" onClick={() => setForm({ ...EMPTY, role: roleFilter !== "all" ? roleFilter : EMPTY.role })} className={`${btn.base} ${btn.primary}`}>
-            <UserPlus className="w-4 h-4" /> {roleFilter === "worker" ? "Nouvel agent" : "Nouvel utilisateur"}
+            <UserPlus className="w-4 h-4" /> {roleFilter === "worker" ? "Nouvel agent" : roleFilter === "accountant" ? "Nouveau comptable" : "Nouvel utilisateur"}
           </button>
         )}
       </div>

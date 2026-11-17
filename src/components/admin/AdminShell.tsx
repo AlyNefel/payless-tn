@@ -100,6 +100,19 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: "accounting",
+    groupTitle: { fr: "Comptabilité", en: "Accounting" },
+    icon: Receipt,
+    items: [
+      { title: "Tableau de bord comptable", href: "/admin/accounting", icon: Receipt },
+      { title: "Encaissements", href: "/admin/accounting?tab=payments", icon: Receipt },
+      { title: "Dépenses", href: "/admin/accounting?tab=expenses", icon: Receipt },
+      { title: "Contrats & factures", href: "/admin/accounting?tab=documents", icon: Receipt },
+      { title: "Caisse", href: "/admin/accounting?tab=cash", icon: Receipt },
+      { title: "Rapports", href: "/admin/accounting?tab=reports", icon: Receipt },
+    ],
+  },
+  {
     id: "crm_comms",
     groupTitle: { fr: "Clients & Communications", en: "CRM & Communications" },
     icon: Users,
@@ -117,6 +130,8 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Paramètres Agence", href: "/admin/settings", icon: Settings },
       { title: "Utilisateurs", href: "/admin/users", icon: Users },
       { title: "Agents d'assistance", href: "/admin/users?role=worker", icon: Users },
+      { title: "Comptables", href: "/admin/users?role=accountant", icon: Users },
+      { title: "Journal d'audit", href: "/admin/audit", icon: ShieldCheck },
       { title: "Rôles & permissions", href: "/admin/roles", icon: ShieldCheck },
     ],
   },

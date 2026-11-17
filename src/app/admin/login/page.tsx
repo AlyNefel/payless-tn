@@ -43,6 +43,7 @@ export default function AdminLoginPage() {
         try {
           const me = await fetch("/api/admin/me", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null));
           if (me?.user?.role === "worker") home = "/admin/worker";
+          else if (me?.user?.role === "accountant") home = "/admin/accounting";
         } catch {
           /* keep the dashboard */
         }
