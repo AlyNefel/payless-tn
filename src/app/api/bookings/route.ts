@@ -29,7 +29,8 @@ import { escapeRegex, isStaffRequest } from "@/lib/apiAuth";
 import { canAccessBooking } from "@/lib/bookingAccess";
 import { withExtraIcons } from "@/lib/extrasServer";
 import { releaseBooking, syncBookingAssignment } from "@/lib/fleetUnits";
-import { effectiveMinDays, getGlobalMinRentalDays } from "@/lib/rentalRules";
+import { getRentalRules, priceSource } from "@/lib/rentalRules";
+import { minDaysFor } from "@/lib/seasonalPricing";
 import { notifyStaff } from "@/lib/notify";
 import { z } from "zod";
 import mongoose from "mongoose";
@@ -269,7 +270,7 @@ export async function POST(request: NextRequest) {
       extrasTotal: number;
     }> = [];
 
-    const globalMinDays = await getGlobalMinRentalDays();
+    const rules = await getRentalRules();
     for (const vInput of vehicleListInputs) {
       // Never substitute another vehicle: the customer books the exact model they selected.
       const vDoc = mongoose.Types.ObjectId.isValid(vInput.vehicleId)
@@ -287,7 +288,8 @@ export async function POST(request: NextRequest) {
       }
 
       // Minimum rental period check (fleet-wide minimum or the vehicle's own, whichever is higher)
-      const requiredMinDays = effectiveMinDays(vDoc, globalMinDays);
+      const priced = priceSource(vDoc, rules);
+      const requiredMinDays = Math.max(rules.minRentalDaysGlobal, minDaysFor(priced, pickupDateStr));
       if (rentalDays < requiredMinDays) {
         return NextResponse.json(
           {
@@ -312,7 +314,7 @@ export async function POST(request: NextRequest) {
       }
 
       const { subtotal: seasonalSubtotal, averageDailyRate } = calculateSeasonalRentalTotal(
-        vDoc,
+        priced,
         pickupDateStr,
         returnDateStr
       );

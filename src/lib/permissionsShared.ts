@@ -40,6 +40,9 @@ export const RESOURCES: ResourceDef[] = [
   { key: "fees", label: "Frais & taxes", group: "Commerce", href: "/admin/fees", actions: ["view", "edit"] },
   { key: "promotions", label: "Promotions", group: "Commerce", href: "/admin/promotions", actions: ["view", "create", "edit", "delete"] },
   { key: "finance", label: "Finances", group: "Commerce", href: "/admin/finance", actions: ["view", "export"] },
+  { key: "payments", label: "Encaissements (paiements, cautions, reçus)", group: "Comptabilité", actions: ["view", "create", "delete", "export"] },
+  { key: "accounting", label: "Comptabilité (dépenses, caisse, contrats, factures, rapports)", group: "Comptabilité", href: "/admin/accounting", actions: ["view", "create", "edit", "delete", "export"] },
+  { key: "audit", label: "Journal d'audit", group: "Système", href: "/admin/audit", actions: ["view"] },
   { key: "notifications", label: "Notifications", group: "Communication", href: "/admin/notifications", actions: ["view", "edit"] },
   { key: "emails", label: "Emails", group: "Communication", href: "/admin/emails", actions: ["view", "edit"] },
   { key: "settings", label: "Paramètres", group: "Système", href: "/admin/settings", actions: ["view", "edit"] },
@@ -70,6 +73,7 @@ const every = (exclude: string[] = []) => RESOURCES.filter((r) => !exclude.inclu
 
 export const SUPERADMIN_KEY = "superadmin";
 export const WORKER_KEY = "worker";
+export const ACCOUNTANT_KEY = "accountant";
 
 export const SYSTEM_ROLES: RoleDef[] = [
   {
@@ -94,7 +98,7 @@ export const SYSTEM_ROLES: RoleDef[] = [
     name: "Manager",
     description: "Opérations, flotte et commerce ; paramètres en lecture.",
     permissions: [
-      ...all(every(["users", "roles", "settings", "emails", "finance"])),
+      ...all(every(["users", "roles", "settings", "emails", "finance", "audit"])),
       "settings.view",
       "emails.view",
       "finance.view",
@@ -121,6 +125,8 @@ export const SYSTEM_ROLES: RoleDef[] = [
       "notifications.view",
       "notifications.edit",
       "media.upload",
+      "payments.view",
+      "payments.create",
     ],
     isSystem: true,
     color: "amber",
@@ -137,9 +143,41 @@ export const SYSTEM_ROLES: RoleDef[] = [
       "bookings.edit",
       "calendar.view",
       "notifications.view",
+      "payments.view",
+      "payments.create",
     ],
     isSystem: true,
     color: "teal",
+  },
+  {
+    key: ACCOUNTANT_KEY,
+    name: "Comptable",
+    description: "Comptabilité : encaissements, dépenses, caisse, contrats, factures et rapports. Aucune action sur la flotte ni les réglages.",
+    permissions: [
+      "dashboard.view",
+      "accounting.view",
+      "accounting.create",
+      "accounting.edit",
+      "accounting.delete",
+      "accounting.export",
+      "payments.view",
+      "payments.create",
+      "payments.delete",
+      "payments.export",
+      "finance.view",
+      "finance.export",
+      "reporting.view",
+      "reporting.export",
+      "bookings.view",
+      "bookings.export",
+      "customers.view",
+      "customers.export",
+      "calendar.view",
+      "garage.view",
+      "notifications.view",
+    ],
+    isSystem: true,
+    color: "rose",
   },
 ];
 

@@ -17,9 +17,17 @@ import {
   RefreshCw,
   Eye,
   HandHelping,
+  ClipboardCheck,
+  Banknote,
+  FileText,
 } from "lucide-react";
 import { StatusBadge, btn, usePermissions } from "@/components/admin/ui";
 import { BookingQuickView } from "@/components/admin/BookingQuickView";
+import { InspectionSheet } from "@/components/admin/InspectionSheet";
+import { BookingPayments } from "@/components/admin/accounting/BookingPayments";
+import { ContractForm } from "@/components/admin/accounting/ContractForm";
+import { Modal } from "@/components/admin/accounting/shared";
+import { dt } from "@/lib/accountingLabels";
 
 interface Row {
   _id: string;
@@ -41,6 +49,11 @@ interface Row {
   totalAmount: number;
   pickupMileage: number | null;
   internalNotes: string;
+  amountPaid?: number;
+  depositHeld?: number;
+  contractNumber?: string;
+  hasPickupInspection?: boolean;
+  hasReturnInspection?: boolean;
 }
 
 type Tab = "pickups" | "returns" | "all";
@@ -70,6 +83,9 @@ export default function WorkerPage() {
   const [q, setQ] = useState("");
   const [action, setAction] = useState<Action>(null);
   const [viewing, setViewing] = useState<Row | null>(null);
+  const [inspecting, setInspecting] = useState<{ row: Row; stage: "pickup" | "return" } | null>(null);
+  const [paying, setPaying] = useState<Row | null>(null);
+  const [contract, setContract] = useState<Row | null>(null);
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -222,6 +238,15 @@ export default function WorkerPage() {
                     </a>
                   )}
                   {!r.hasCar && open && <p className="text-xs font-bold text-amber-600">Aucun véhicule physique affecté</p>}
+                  {(() => {
+                    const rest = r.paymentStatus === "paid" && !r.amountPaid ? 0 : Math.max(0, r.totalAmount - (r.amountPaid || 0));
+                    return (
+                      <p className={`text-xs font-bold ${rest > 0 ? "text-red-600" : "text-emerald-600"}`}>
+                        {rest > 0 ? `Reste à payer : ${dt(rest)}` : "Location soldée"}
+                        {r.depositHeld ? ` · caution détenue ${dt(r.depositHeld)}` : ""}
+                      </p>
+                    );
+                  })()}
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   {canEdit && canPickup && (
@@ -244,7 +269,26 @@ export default function WorkerPage() {
                       <StickyNote className="w-4 h-4" /> Note
                     </button>
                   )}
-                  <button type="button" onClick={() => setViewing(r)} className={`${big} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 ${canEdit && open ? "col-span-2" : ""}`}>
+                  {canEdit && open && (
+                    <button
+                      type="button"
+                      onClick={() => setInspecting({ row: r, stage: canReturn ? "return" : "pickup" })}
+                      className={`${big} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}
+                    >
+                      <ClipboardCheck className="w-4 h-4" /> État des lieux{(canReturn ? r.hasReturnInspection : r.hasPickupInspection) ? " ✓" : ""}
+                    </button>
+                  )}
+                  {can("payments.view") && r.status !== "cancelled" && r.status !== "rejected" && (
+                    <button type="button" onClick={() => setPaying(r)} className={`${big} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}>
+                      <Banknote className="w-4 h-4" /> Encaisser
+                    </button>
+                  )}
+                  {open && (
+                    <button type="button" onClick={() => setContract(r)} className={`${big} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}>
+                      <FileText className="w-4 h-4" /> Contrat
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setViewing(r)} className={`${big} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 col-span-2`}>
                     <Eye className="w-4 h-4" /> Voir la réservation
                   </button>
                 </div>
@@ -275,6 +319,26 @@ export default function WorkerPage() {
           onError={(text) => notify(false, text)}
         />
       )}
+
+      {inspecting && (
+        <InspectionSheet
+          bookingId={inspecting.row._id}
+          stage={inspecting.stage}
+          title={`${inspecting.row.reference} · ${inspecting.row.vehicleName}`}
+          minMileage={inspecting.stage === "return" ? inspecting.row.pickupMileage : null}
+          defaultCustomer={inspecting.row.customerName}
+          onClose={() => setInspecting(null)}
+          onSaved={() => {
+            setInspecting(null);
+            notify(true, "État des lieux enregistré");
+            load();
+          }}
+        />
+      )}
+      <Modal open={Boolean(paying)} onClose={() => setPaying(null)} title={paying ? `${paying.reference} — ${paying.customerName}` : ""} wide>
+        {paying && <BookingPayments bookingId={paying._id} onChanged={load} compact />}
+      </Modal>
+      <ContractForm bookingId={contract?._id || null} title={contract?.customerName} onClose={() => setContract(null)} onSaved={load} />
 
       <BookingQuickView
         booking={viewing ? { ...viewing } : null}

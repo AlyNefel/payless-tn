@@ -14,7 +14,8 @@ import {
 import { CarSpinner } from "@/components/ui/CarSpinner";
 import { useCompanySettings } from "@/contexts/CompanySettingsContext";
 import { DEFAULT_ZONES, matchZone, type ZoneFeeConfig } from "@/lib/locationFees";
-import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate } from "@/lib/seasonalPricing";
+import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate, minDaysFor } from "@/lib/seasonalPricing";
+import { useRentalRules } from "@/lib/useRentalRules";
 import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected, snapAmount } from "@/lib/extras";
 import { OptionIcon } from "@/components/ui/OptionIcon";
 import { fullResImageUrl } from "@/lib/cloudinaryUrl";
@@ -362,15 +363,29 @@ function BookingContent() {
     return computeRentalDays(data.pickupDate, data.returnDate);
   }, [data.pickupDate, data.returnDate]);
 
+  // Fleet-wide rules, live: a period or minimum changed in the back office applies to the
+  // cars already in the cart, at every step. The server re-checks everything on submit.
+  const { rules: liveRules, loaded: rulesLoaded, minDaysOn, periodFor } = useRentalRules();
+  const live = <T extends { minRentalDays?: number; pricing?: any }>(v: T): T =>
+    rulesLoaded
+      ? {
+          ...v,
+          minRentalDays: Math.max(Number(v.minRentalDays || 1), liveRules.minRentalDaysGlobal),
+          pricing: { ...(v.pricing || {}), globalSeasons: liveRules.seasons },
+        }
+      : v;
+  const stepOneMinDays = data.pickupDate ? minDaysOn(data.pickupDate) : 1;
+  const stepOnePeriod = data.pickupDate ? periodFor(data.pickupDate) : null;
+
   const vehicleSubtotal = (vehicle: Vehicle) => {
-    const { subtotal: seasonal } = calculateSeasonalRentalTotal(vehicle, data.pickupDate, data.returnDate);
+    const { subtotal: seasonal } = calculateSeasonalRentalTotal(live(vehicle), data.pickupDate, data.returnDate);
     return seasonal || (vehicle.pricing.daily || 0) * rentalDays;
   };
 
   const subtotal = useMemo(() => {
     return cart.reduce((sum, item) => sum + vehicleSubtotal(item.vehicle), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, data.pickupDate, data.returnDate, rentalDays]);
+  }, [cart, data.pickupDate, data.returnDate, rentalDays, liveRules, rulesLoaded]);
 
   const extrasTotal = useMemo(() => {
     return cart.reduce((sum, item) => {
@@ -817,13 +832,14 @@ function BookingContent() {
 
   const hasMinRentalViolation = useMemo(() => {
     return cart.some((c) => {
-      const minDays = c.vehicle.minRentalDays || (c.vehicle.pricing as any)?.minRentalDays || 1;
+      const minDays = minDaysFor(live(c.vehicle), data.pickupDate);
       return rentalDays < minDays;
     });
-  }, [cart, rentalDays]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, rentalDays, data.pickupDate, liveRules]);
 
   const canProceed = (s: Step) => {
-    if (s === 1) return data.pickupDate && data.returnDate && data.pickupLocationId;
+    if (s === 1) return data.pickupDate && data.returnDate && data.pickupLocationId && rentalDays >= stepOneMinDays;
     if (s === 2) {
       if (cart.length === 0 || unavailableIds.length > 0) return false;
       return !hasMinRentalViolation;
@@ -1087,6 +1103,32 @@ function BookingContent() {
                   </div>
                 )}
 
+                {data.pickupDate && data.returnDate && (stepOneMinDays > 1 || stepOnePeriod) && (
+                  <div
+                    role="status"
+                    className={`rounded-xl p-3 text-xs font-semibold border ${
+                      rentalDays < stepOneMinDays
+                        ? "bg-red-50 dark:bg-red-950/40 border-red-200 dark:border-red-900/50 text-red-800 dark:text-red-200"
+                        : "bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200"
+                    }`}
+                  >
+                    {stepOnePeriod ? `${stepOnePeriod.name} · ` : ""}
+                    {stepOneMinDays > 1
+                      ? locale === "ar"
+                        ? `الحد الأدنى للإيجار: ${stepOneMinDays} أيام`
+                        : locale === "en"
+                        ? `Minimum rental: ${stepOneMinDays} days`
+                        : `Durée minimale de location : ${stepOneMinDays} jours`
+                      : locale === "ar"
+                      ? "تعريفة الفترة مطبقة"
+                      : locale === "en"
+                      ? "Period rate applies"
+                      : "Tarif de la période appliqué"}
+                    {rentalDays < stepOneMinDays &&
+                      (locale === "ar" ? " — يرجى تمديد تاريخ الإرجاع." : locale === "en" ? " — please choose a later return date." : " — choisissez une date de retour plus tardive.")}
+                  </div>
+                )}
+
                 {data.pickupDate && data.returnDate && (
                   <div className="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 rounded-xl p-4 text-sm text-blue-900 dark:text-blue-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                     <div>
@@ -1170,9 +1212,9 @@ function BookingContent() {
                       </p>
                       <ul className="list-disc list-inside space-y-0.5">
                         {cart
-                          .filter((c) => rentalDays < (c.vehicle.minRentalDays || (c.vehicle.pricing as any)?.minRentalDays || 1))
+                          .filter((c) => rentalDays < (minDaysFor(live(c.vehicle), data.pickupDate)))
                           .map((c, i) => {
-                            const mDays = c.vehicle.minRentalDays || (c.vehicle.pricing as any)?.minRentalDays || 1;
+                            const mDays = minDaysFor(live(c.vehicle), data.pickupDate);
                             return (
                               <li key={i}>
                                 <strong>{c.vehicle.brand} {c.vehicle.model}</strong> : {locale === "ar" ? `الحد الأدنى ${mDays} أيام (حجزك الحالي: ${rentalDays} يوم)` : locale === "en" ? `Minimum ${mDays} days required (current: ${rentalDays} days)` : `Minimum ${mDays} jours requis (votre durée : ${rentalDays} j)`}
@@ -1219,7 +1261,7 @@ function BookingContent() {
                     {/* Pre-selected cars details */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                       {cart.map((c, idx) => {
-                        const minReq = c.vehicle.minRentalDays || (c.vehicle.pricing as any)?.minRentalDays || 1;
+                        const minReq = minDaysFor(live(c.vehicle), data.pickupDate);
                         const isViolated = rentalDays < minReq;
                         return (
                           <div
@@ -1238,7 +1280,7 @@ function BookingContent() {
                                 {c.vehicle.brand} {c.vehicle.model}
                               </div>
                               <div className="text-[11px] text-blue-600 dark:text-blue-400 font-mono font-bold mt-0.5">
-                                {fmt(getVehicleEffectiveDailyRate(c.vehicle, data.pickupDate))} DT / jour
+                                {fmt(getVehicleEffectiveDailyRate(live(c.vehicle), data.pickupDate))} DT / jour
                               </div>
                               {isViolated && (
                                 <div className="text-[10px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
@@ -1319,7 +1361,7 @@ function BookingContent() {
                         const isSelected = inCartCount > 0;
                         const maxAvail = v.availableUnits !== undefined ? v.availableUnits : 5;
                         const canAddMore = inCartCount < maxAvail;
-                        const vMinDays = v.minRentalDays || (v.pricing as any)?.minRentalDays || 1;
+                        const vMinDays = minDaysFor(live(v), data.pickupDate);
                         const isMinViolated = rentalDays < vMinDays;
 
                         return (
@@ -1410,7 +1452,7 @@ function BookingContent() {
                             <div className="w-full sm:w-auto flex items-center justify-between sm:flex-col sm:items-end gap-2 border-t sm:border-t-0 border-border/50 pt-2 sm:pt-0 shrink-0">
                               <div className="text-right">
                                 <div className="text-lg sm:text-xl font-bold text-blue-700 dark:text-blue-400">
-                                  {fmt(v.pricing?.daily)} {currencySymbol}
+                                  {fmt(getVehicleEffectiveDailyRate(live(v), data.pickupDate))} {currencySymbol}
                                 </div>
                                 <div className="text-[11px] text-muted-foreground">
                                   {locale === "ar" ? "/ يوم شامل" : locale === "en" ? "/ day incl. tax" : "/ jour TTC"}
@@ -1963,7 +2005,7 @@ function BookingContent() {
                             <div className="text-xs text-muted-foreground">Tarif journalier</div>
                             <div className="flex sm:block items-baseline gap-1 text-right">
                               <span className="text-lg font-bold text-blue-700 dark:text-blue-400">
-                                {fmt(cItem.vehicle.pricing?.daily)} {currencySymbol}
+                                {fmt(getVehicleEffectiveDailyRate(live(cItem.vehicle), data.pickupDate))} {currencySymbol}
                               </span>
                               <span className="text-[11px] text-muted-foreground ml-1 sm:ml-0 sm:block">/ jour TTC</span>
                             </div>

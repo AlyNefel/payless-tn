@@ -17,7 +17,8 @@ import { useCompanySettings } from "@/contexts/CompanySettingsContext";
 import { OptionIcon } from "@/components/ui/OptionIcon";
 import { isPerDayPricing } from "@/lib/extras";
 import { VehicleImage, VEHICLE_PLACEHOLDER } from "@/components/ui/VehicleImage";
-import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
+import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate, minDaysFor } from "@/lib/seasonalPricing";
+import { useRentalRules } from "@/lib/useRentalRules";
 import {
   getVehicleFeatureLabel,
   getVehicleFuelLabel,
@@ -84,6 +85,14 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
   const [rentalDays, setRentalDays] = useState(0);
   const [totalPrice, setTotalPrice] = useState(0);
   const [options, setOptions] = useState<AvailableOption[]>([]);
+  // Fleet-wide rules (pricing periods, minimum duration), live from the back office.
+  const { rules: liveRules } = useRentalRules();
+  const rulesKey = JSON.stringify(liveRules);
+  const withRules = <T extends { minRentalDays?: number; pricing?: any }>(v: T): T => ({
+    ...v,
+    minRentalDays: Math.max(Number(v.minRentalDays || v.pricing?.minRentalDays || 1), liveRules.minRentalDaysGlobal),
+    pricing: { ...(v.pricing || {}), globalSeasons: liveRules.seasons },
+  });
 
   useEffect(() => {
     fetch("/api/extras")
@@ -120,12 +129,13 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
       const ret = new Date(returnDate);
       if (ret > pickup) {
         // Same pricing engine as the booking wizard and the booking API (seasonal daily rates).
-        const { subtotal, days } = calculateSeasonalRentalTotal(vehicle, pickupDate, returnDate);
+        const { subtotal, days } = calculateSeasonalRentalTotal(withRules(vehicle as any), pickupDate, returnDate);
         setRentalDays(days);
         setTotalPrice(subtotal);
       }
     }
-  }, [pickupDate, returnDate, vehicle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickupDate, returnDate, vehicle, rulesKey]);
 
   // Exact availability for the chosen dates (same engine as the booking API).
   const [periodStock, setPeriodStock] = useState<{ available: number; checked: string } | null>(null);
@@ -153,8 +163,10 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
   }, [pickupDate, returnDate, vehicleId]);
   const soldOutForPeriod = periodStock !== null && periodStock.available <= 0;
 
+  const requiredMinDays = vehicle ? minDaysFor(withRules(vehicle as any), pickupDate || undefined) : 1;
+  const belowMinimum = Boolean(pickupDate && returnDate && rentalDays > 0 && rentalDays < requiredMinDays);
   const handleBook = () => {
-    if (soldOutForPeriod) return;
+    if (soldOutForPeriod || belowMinimum) return;
     const params = new URLSearchParams({ vehicleId });
     if (pickupDate) params.set("pickupDate", pickupDate);
     if (returnDate) params.set("returnDate", returnDate);
@@ -176,7 +188,8 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
   const isRTL = locale === "ar";
 
   // Amounts are stored in minor units (1 TND = 100).
-  const rawDaily = vehicle?.pricing?.daily || 0;
+  // Rate in force on the chosen pickup day (today when no date is chosen yet).
+  const rawDaily = vehicle ? getVehicleEffectiveDailyRate(withRules(vehicle as any), pickupDate || undefined) || vehicle.pricing?.daily || 0 : 0;
   const dailyTND = Math.round(rawDaily / 100);
   const dailyEUR = Math.round(dailyTND / 3.35);
   const rawDeposit = vehicle?.pricing?.deposit || vehicle?.deposit || 0;
@@ -581,9 +594,19 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
                       </div>
                     )}
 
+                    {(belowMinimum || requiredMinDays > 1) && (
+                      <p role="status" className={`text-xs font-semibold ${belowMinimum ? "text-red-300" : "text-amber-300"}`}>
+                        {locale === "fr"
+                          ? `Durée minimale de location : ${requiredMinDays} jours`
+                          : locale === "ar"
+                          ? `الحد الأدنى للإيجار: ${requiredMinDays} أيام`
+                          : `Minimum rental: ${requiredMinDays} days`}
+                      </p>
+                    )}
+
                     <Button
                       onClick={handleBook}
-                      disabled={soldOutForPeriod || availableCount <= 0}
+                      disabled={soldOutForPeriod || availableCount <= 0 || belowMinimum}
                       className="w-full h-12 text-base font-semibold bg-[#1D4ED8] hover:bg-[#1e40af] text-white rounded-xl"
                     >
                       {!soldOutForPeriod && availableCount > 0

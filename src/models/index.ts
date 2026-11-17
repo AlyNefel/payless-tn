@@ -19,3 +19,7 @@ export { default as NewsletterSubscriber } from "./NewsletterSubscriber";
 export { default as Role } from "./Role";
 export { default as UnitHold } from "./UnitHold";
 export { default as InsurancePolicy } from "./InsurancePolicy";
+export { default as StoredFile } from "./StoredFile";
+export { default as Expense } from "./Expense";
+export { default as CashClosing } from "./CashClosing";
+export { default as Counter } from "./Counter";

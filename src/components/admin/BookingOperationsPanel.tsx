@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import { usePermissions } from "@/components/admin/ui/usePermissions";
 import {
   KeyRound,
   LogIn,
@@ -72,6 +73,9 @@ export function BookingOperationsPanel(props: Props) {
     return toISODate(d);
   });
   const [newReturnTime, setNewReturnTime] = useState(props.returnTime || "");
+  // Only roles allowed to edit prices may set a custom daily price for extra days.
+  const { can, loaded: permsLoaded } = usePermissions();
+  const canPrice = permsLoaded && can("pricing.edit");
   const [dailyRate, setDailyRate] = useState(String(props.models[0]?.baseDailyTND ?? ""));
 
   const status = props.bookingStatus;
@@ -327,7 +331,8 @@ export function BookingOperationsPanel(props: Props) {
                 </div>
                 <label className="block space-y-1">
                   <span className="font-semibold text-slate-700 dark:text-slate-300">Prix journalier appliqué (prix de base, DT)</span>
-                  <input type="number" min={0} step="0.001" className={input} value={dailyRate} onChange={(e) => setDailyRate(e.target.value)} />
+                  <input type="number" min={0} step="0.001" className={`${input} disabled:opacity-60`} value={dailyRate} disabled={!canPrice} onChange={(e) => setDailyRate(e.target.value)} />
+                  {!canPrice && <span className="block text-[11px] text-slate-500">Tarif standard — votre rôle ne permet pas de modifier le prix.</span>}
                 </label>
                 <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 font-semibold">
                   {extraDays > 0
@@ -366,7 +371,7 @@ export function BookingOperationsPanel(props: Props) {
                         action: "change_return",
                         newReturnDate,
                         newReturnTime: newReturnTime || undefined,
-                        dailyRateTND: extraDays > 0 && dailyRate !== "" ? Number(dailyRate) : undefined,
+                        dailyRateTND: canPrice && extraDays > 0 && dailyRate !== "" ? Number(dailyRate) : undefined,
                         notes: notes || undefined,
                       },
                       extraDays > 0 ? `Location prolongée de ${extraDays} jour(s)` : extraDays < 0 ? `Durée réduite de ${-extraDays} jour(s)` : "Heure de retour modifiée"

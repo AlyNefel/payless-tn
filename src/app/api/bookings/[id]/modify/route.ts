@@ -5,6 +5,7 @@ import { sendEmail } from "@/lib/email";
 import { formatDate } from "@/lib/utils";
 import { computeRentalDays, extraLineTotal, onlySelected } from "@/lib/extras";
 import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
+import { getRentalRules, priceSource } from "@/lib/rentalRules";
 import { notifyStaff } from "@/lib/notify";
 import { revalidateAssignments } from "@/lib/fleetUnits";
 import { getVehicleStockAvailability } from "@/lib/availability";
@@ -130,7 +131,7 @@ export async function POST(
 
       if (vehicle?.pricing && newRentalDays !== oldRentalDays) {
         const isoDay = (d: Date) => d.toISOString().slice(0, 10);
-        newSubtotal = calculateSeasonalRentalTotal(vehicle, isoDay(newPickupDate), isoDay(newReturnDate)).subtotal;
+        newSubtotal = calculateSeasonalRentalTotal(priceSource(vehicle, await getRentalRules()), isoDay(newPickupDate), isoDay(newReturnDate)).subtotal;
         const perDayContribution = oldRentalDays > 0 ? Math.round(newContribution / oldRentalDays) : 200;
         newContribution = perDayContribution * newRentalDays;
         const extrasTotal = onlySelected(booking.extras).reduce(

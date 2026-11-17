@@ -10,6 +10,8 @@ import { withExtraIcons } from "@/lib/extrasServer";
 import mongoose from "mongoose";
 import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected } from "@/lib/extras";
 import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
+import { getRentalRules, priceSource } from "@/lib/rentalRules";
+import { bookingMoney, recordPayment, resyncAfterPriceChange } from "@/lib/ledger";
 import { getVehicleStockAvailability } from "@/lib/availability";
 import {
   assignUnitManually,
@@ -109,6 +111,16 @@ export async function PATCH(
     const body = await request.json();
 
     if (typeof body.action === "string") {
+      // A custom price for extra days is a pricing decision: reserved to roles allowed to edit prices.
+      if (body.dailyRateTND !== undefined && body.dailyRateTND !== null) {
+        const priceGuard = await requirePermission("pricing", "edit");
+        if (!priceGuard.ok) {
+          return NextResponse.json(
+            { success: false, error: "Votre rôle ne permet pas de modifier le prix. Le tarif standard s'applique.", code: "PRICE_NOT_ALLOWED" },
+            { status: 403 }
+          );
+        }
+      }
       return handleAction(id, body, session.user?.email || "Admin");
     }
 
@@ -124,18 +136,45 @@ export async function PATCH(
       return NextResponse.json({ error: parsed.error.issues[0]?.message || "Validation error" }, { status: 400 });
     }
 
-    const updates: Record<string, unknown> = { ...parsed.data };
-    // Never let the generic update overwrite computed / operational fields.
-    for (const k of ["pricingBreakdown", "assignedUnits", "auditHistory", "extensions", "bookingReference", "customerId"]) {
-      delete updates[k];
+    // Strict whitelist: amounts, options, deposit, customer and audit data can never be written
+    // through the generic update (prices are always recomputed by the server).
+    const EDITABLE = [
+      "internalNote", "internalNotes", "adminNotes", "vehicleId",
+      "pickupDate", "returnDate", "pickupTime", "returnTime", "actualPickupDate", "actualReturnDate",
+    ] as const;
+    const updates: Record<string, unknown> = {};
+    for (const k of EDITABLE) {
+      const v = (parsed.data as Record<string, unknown>)[k];
+      if (v !== undefined && (typeof v === "string" || typeof v === "number")) updates[k] = v;
     }
-    delete updates.vehicle;
     if (parsed.data.status) {
       updates.bookingStatus = parsed.data.status;
     }
 
     const currentBooking = await Booking.findById(id).populate("vehicleId").populate("customerId");
     if (!currentBooking) return NextResponse.json({ error: "Booking not found" }, { status: 404 });
+
+    // The payment status follows the ledger. "Payé" from the booking form records the remaining
+    // balance as a payment (so there is always a receipt and a name behind the money).
+    if (parsed.data.paymentStatus && parsed.data.paymentStatus !== currentBooking.paymentStatus) {
+      const money = await bookingMoney(id, currentBooking.pricingBreakdown?.totalAmount || 0);
+      if (parsed.data.paymentStatus === "paid") {
+        if (money.remaining > 0) {
+          const payGuard = await requirePermission("payments", "create");
+          if (!payGuard.ok) return payGuard.response;
+          const method = ["cash", "card", "bank_transfer", "cheque", "online"].includes(String(currentBooking.paymentMethod)) ? String(currentBooking.paymentMethod) : "cash";
+          await recordPayment({ bookingId: id, kind: "payment", amount: money.remaining, method: method as "cash", recordedBy: session.user?.email || "Admin", notes: "Solde marqué payé depuis la réservation" });
+        }
+      } else if (money.paid === 0 && money.depositHeld === 0) {
+        // No movement in the ledger: the manual status (legacy bookings) is still accepted.
+        updates.paymentStatus = parsed.data.paymentStatus;
+      } else {
+        return NextResponse.json(
+          { error: "Des paiements sont enregistrés pour cette réservation : annulez ou remboursez-les dans Encaissements, le statut suivra." },
+          { status: 409 }
+        );
+      }
+    }
 
     // Manual date / model change by the admin: the new window must be really available.
     {
@@ -217,7 +256,7 @@ export async function PATCH(
             const veh = currentBooking.vehicleId as unknown as { pricing?: { daily: number } } | null;
             const iso = (d: Date) => new Date(d).toISOString().slice(0, 10);
             const subtotal = veh?.pricing
-              ? calculateSeasonalRentalTotal(veh, iso(mod.pickupDate), iso(mod.returnDate)).subtotal
+              ? calculateSeasonalRentalTotal(priceSource(veh, await getRentalRules()), iso(mod.pickupDate), iso(mod.returnDate)).subtotal
               : pb.subtotal;
             const extrasTotal = onlySelected(currentBooking.extras).reduce(
               (acc, ex) => acc + extraLineTotal(ex.price || 0, ex.quantity || 1, days, ex.pricingType),
@@ -327,6 +366,7 @@ export async function PATCH(
       .populate("customerId")
       .populate("pickupLocationId")
       .populate("returnLocationId");
+    if (updates.pricingBreakdown) await resyncAfterPriceChange(id);
 
     if (!booking) return NextResponse.json({ error: "Booking not found" }, { status: 404 });
 
@@ -441,6 +481,9 @@ const changeReturn = {
   notes: z.string().max(1000).optional(),
 };
 
+/** Only documents stored by our own private upload route. */
+const docUrl = z.string().regex(/^\/api\/admin\/documents\/[a-f0-9]{24}$/, "Document invalide");
+
 const actionSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("assign_unit"),
@@ -466,6 +509,20 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("extend"), ...changeReturn }),
   z.object({ action: z.literal("change_return"), ...changeReturn }),
   z.object({ action: z.literal("add_note"), note: z.string().trim().min(1).max(1000) }),
+  // Vehicle condition report at departure or return.
+  z.object({
+    action: z.literal("inspection"),
+    stage: z.enum(["pickup", "return"]),
+    mileage: z.number().min(0).max(2_000_000).optional(),
+    fuelLevel: z.number().int().min(0).max(8).optional(),
+    cleanliness: z.enum(["clean", "acceptable", "dirty"]).optional(),
+    damages: z.array(z.object({ zone: z.string().trim().min(1).max(60), description: z.string().trim().max(300).default(""), photoUrl: docUrl.optional() })).max(30).default([]),
+    photos: z.array(docUrl).max(20).default([]),
+    checklist: z.record(z.string().max(30), z.boolean()).optional(),
+    signatureUrl: docUrl.optional(),
+    customerName: z.string().trim().max(120).optional(),
+    notes: z.string().max(1000).optional(),
+  }),
 ]);
 
 async function handleAction(id: string, body: unknown, by: string) {
@@ -505,6 +562,60 @@ async function handleAction(id: string, body: unknown, by: string) {
     booking.internalNotes = [booking.internalNotes, stamp].filter(Boolean).join("\n").slice(-4000);
     booking.auditHistory.push({ action: "Note ajoutée", performedBy: by, performedByRole: "staff", timestamp: new Date(), notes: a.note });
     await booking.save();
+    return NextResponse.json({ success: true, booking });
+  }
+
+  if (a.action === "inspection") {
+    const key = a.stage === "pickup" ? "pickupInspection" : "returnInspection";
+    if (a.stage === "return" && typeof a.mileage === "number" && typeof booking.pickupMileage === "number" && a.mileage < booking.pickupMileage) {
+      return NextResponse.json({ error: `Kilométrage retour inférieur au kilométrage de départ (${booking.pickupMileage} km).` }, { status: 400 });
+    }
+    booking.set(key, {
+      at: new Date(),
+      by,
+      mileage: a.mileage,
+      fuelLevel: a.fuelLevel,
+      cleanliness: a.cleanliness,
+      damages: a.damages,
+      photos: a.photos,
+      checklist: a.checklist,
+      signatureUrl: a.signatureUrl,
+      customerName: a.customerName,
+      notes: a.notes,
+    });
+    booking.auditHistory.push({
+      action: a.stage === "pickup" ? "État des lieux de départ" : "État des lieux de retour",
+      performedBy: by,
+      performedByRole: "staff",
+      timestamp: new Date(),
+      notes: `${a.damages.length} dommage(s), carburant ${a.fuelLevel ?? "?"}/8${typeof a.mileage === "number" ? `, ${a.mileage} km` : ""}`,
+    });
+    await booking.save();
+    // New damage found at return: the manager must know before the deposit is given back.
+    if (a.stage === "return") {
+      const known = new Set((booking.pickupInspection?.damages || []).map((d) => `${d.zone}|${d.description}`.toLowerCase()));
+      const fresh = a.damages.filter((d) => !known.has(`${d.zone}|${d.description}`.toLowerCase()));
+      const lessFuel = typeof a.fuelLevel === "number" && typeof booking.pickupInspection?.fuelLevel === "number" && a.fuelLevel < booking.pickupInspection.fuelLevel;
+      if (fresh.length > 0 || lessFuel) {
+        notifyStaff({
+          type: "return_issue",
+          category: "booking",
+          severity: "warning",
+          title: {
+            fr: `Retour avec réserve — ${booking.bookingReference}`,
+            en: `Return with issues — ${booking.bookingReference}`,
+            ar: `إرجاع مع ملاحظات — ${booking.bookingReference}`,
+          },
+          message: {
+            fr: `${carLabel} : ${[fresh.length ? `${fresh.length} nouveau(x) dommage(s) (${fresh.map((d) => d.zone).join(", ")})` : "", lessFuel ? `carburant ${a.fuelLevel}/8 au lieu de ${booking.pickupInspection?.fuelLevel}/8` : ""].filter(Boolean).join(" ; ")}. À traiter avant de restituer la caution.`,
+            en: `${carLabel}: ${fresh.length} new damage(s)${lessFuel ? ", less fuel" : ""}. Check before giving the deposit back.`,
+            ar: `${carLabel}`,
+          },
+          link: `/admin/bookings/${id}`,
+          dedupeKey: `return_issue:${id}:${fresh.length}:${a.fuelLevel ?? ""}`,
+        }).catch(() => {});
+      }
+    }
     return NextResponse.json({ success: true, booking });
   }
 
@@ -675,6 +786,7 @@ async function handleAction(id: string, body: unknown, by: string) {
   });
   booking.markModified("pricingBreakdown");
   await booking.save();
+  await resyncAfterPriceChange(id);
   // Claims the extra days (or frees the removed ones): calendar and availability follow immediately.
   await syncBookingAssignment(id);
 

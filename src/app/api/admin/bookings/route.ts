@@ -140,6 +140,13 @@ export async function GET(request: NextRequest) {
         returnMileage: b.returnMileage ?? null,
         internalNotes: b.internalNotes || "",
         hasCar: (b.assignedUnits || []).some((u: any) => u.unitId),
+        amountPaid: b.amountPaid || 0,
+        depositHeld: b.depositHeld || 0,
+        depositDue: b.pricingBreakdown?.depositAmount || 0,
+        contractNumber: b.contract?.number || "",
+        invoiceNumber: b.invoiceNumber || "",
+        hasPickupInspection: Boolean(b.pickupInspection?.at),
+        hasReturnInspection: Boolean(b.returnInspection?.at),
         customerLanguage: b.customerLanguage || "fr",
         createdAt: b.createdAt,
       };

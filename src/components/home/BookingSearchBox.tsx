@@ -3,6 +3,8 @@
 import React, { useState, useMemo } from "react";
 import { useRouter } from "@/i18n/navigation";
 import { useLocale, useTranslations } from "next-intl";
+import { addDays, useRentalRules } from "@/lib/useRentalRules";
+import { computeRentalDays } from "@/lib/extras";
 import {
   MapPin,
   Calendar,
@@ -160,22 +162,18 @@ export function BookingSearchBox() {
   const [diffReturnLocation, setDiffReturnLocation] = useState<boolean>(false);
   const [pickupDate, setPickupDate] = useState<string>(tomorrow);
   const [pickupTime, setPickupTime] = useState<string>("10:00");
-  const [returnDate, setReturnDate] = useState<string>(defaultReturn);
+  const [returnDateRaw, setReturnDate] = useState<string>(defaultReturn);
   const [returnTime, setReturnTime] = useState<string>("10:00");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
-  // Calculate rental duration in days
-  const rentalDays = useMemo(() => {
-    try {
-      const p = new Date(`${pickupDate}T${pickupTime}`);
-      const r = new Date(`${returnDate}T${returnTime}`);
-      const diffMs = r.getTime() - p.getTime();
-      const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      return days > 0 ? days : 1;
-    } catch {
-      return 1;
-    }
-  }, [pickupDate, pickupTime, returnDate, returnTime]);
+  // Fleet-wide rules (minimum duration, pricing periods) apply from this very first step.
+  const { minDaysOn, periodFor } = useRentalRules();
+  const minDays = minDaysOn(pickupDate);
+  const period = periodFor(pickupDate);
+  const minReturn = addDays(pickupDate, minDays);
+  // The chosen return date, pushed forward when it is shorter than the minimum duration.
+  const returnDate = returnDateRaw < minReturn ? minReturn : returnDateRaw;
+  const rentalDays = computeRentalDays(pickupDate, returnDate);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -398,9 +396,6 @@ export function BookingSearchBox() {
                   value={pickupDate}
                   onChange={(e) => {
                     setPickupDate(e.target.value);
-                    if (e.target.value > returnDate) {
-                      setReturnDate(e.target.value);
-                    }
                   }}
                   className="col-span-3 w-full min-w-0 bg-background dark:bg-neutral-800 border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-3 h-11 text-xs sm:text-sm text-foreground outline-none transition-colors"
                   required
@@ -436,7 +431,7 @@ export function BookingSearchBox() {
                 <input
                   type="date"
                   aria-label={locale === "ar" ? "تاريخ الإرجاع" : locale === "en" ? "Return date" : "Date de restitution"}
-                  min={pickupDate}
+                  min={minReturn}
                   value={returnDate}
                   onChange={(e) => setReturnDate(e.target.value)}
                   className="col-span-3 w-full min-w-0 bg-background dark:bg-neutral-800 border border-input focus:border-amber-400 focus:ring-1 focus:ring-amber-400 rounded-xl px-3 h-11 text-xs sm:text-sm text-foreground outline-none transition-colors"
@@ -457,6 +452,23 @@ export function BookingSearchBox() {
               </div>
             </div>
           </div>
+
+          {(minDays > 1 || period) && (
+            <p className="text-xs font-semibold text-amber-700 dark:text-amber-300" role="status">
+              {period ? `${period.name} · ` : ""}
+              {minDays > 1
+                ? locale === "ar"
+                  ? `الحد الأدنى للإيجار: ${minDays} أيام`
+                  : locale === "en"
+                  ? `Minimum rental: ${minDays} days`
+                  : `Durée minimale de location : ${minDays} jours`
+                : locale === "ar"
+                ? "تعريفة الفترة مطبقة"
+                : locale === "en"
+                ? "Period rate applies"
+                : "Tarif de la période appliqué"}
+            </p>
+          )}
 
           {/* Bottom Bar: Different Return Checkbox & Big Search Button */}
           <div className="pt-2 sm:pt-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 w-full">

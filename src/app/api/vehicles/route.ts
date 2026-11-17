@@ -5,7 +5,8 @@ import { getFleetStockMap, stockWithoutDates } from "@/lib/availability";
 import { sanitizeVehicleForClient } from "@/lib/sanitize";
 import { escapeRegex, isStaffRequest } from "@/lib/apiAuth";
 import mongoose from "mongoose";
-import { effectiveMinDays, getGlobalMinRentalDays } from "@/lib/rentalRules";
+import { applyRules, getRentalRules } from "@/lib/rentalRules";
+import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate, pricingPeriodName } from "@/lib/seasonalPricing";
 
 export const dynamic = "force-dynamic";
 
@@ -236,7 +237,9 @@ export async function GET(request: NextRequest) {
     ]);
 
     // Fleet-wide minimum rental period (a vehicle's own minimum wins when higher).
-    const globalMinDays = await getGlobalMinRentalDays();
+    const rules = await getRentalRules();
+    const day = /^\d{4}-\d{2}-\d{2}/;
+    const hasPeriod = Boolean(pickupDate && returnDate && day.test(pickupDate) && day.test(returnDate) && returnDate > pickupDate);
 
     // Format & Enrich with stock counters, and sanitize for non-admin
     const processedVehicles = vehicles.map((v: any) => {
@@ -244,11 +247,22 @@ export async function GET(request: NextRequest) {
       // With a date window: exact stock for that window. Without: cars currently in service.
       const stock = fleetStockMap[vId] || stockWithoutDates(v);
 
-      const minDays = effectiveMinDays(v, globalMinDays);
+      // Fleet-wide rules ("Tarifs par période") merged in: same numbers on every step of the site.
+      const ruled = applyRules(v, rules, hasPeriod ? pickupDate! : undefined) as any;
+      const priceDay = hasPeriod ? pickupDate! : undefined;
+      const quote = hasPeriod ? calculateSeasonalRentalTotal(ruled, pickupDate!, returnDate!) : null;
       const enriched = {
-        ...v,
-        minRentalDays: minDays,
-        pricing: { ...(v.pricing || {}), minRentalDays: minDays },
+        ...ruled,
+        periodPricing: {
+          // Daily rate in force on the pickup day (or today without dates), minor units.
+          dailyRate: quote ? quote.averageDailyRate : getVehicleEffectiveDailyRate(ruled, priceDay),
+          baseDailyRate: Number(v.pricing?.daily || 0),
+          days: quote ? quote.days : null,
+          total: quote ? quote.subtotal : null,
+          periodName: pricingPeriodName(ruled, priceDay),
+          minDays: ruled.minRentalDaysForPeriod,
+          meetsMinimum: quote ? quote.days >= ruled.minRentalDaysForPeriod : true,
+        },
         totalUnits: stock.totalUnits,
         availableUnits: stock.availableUnits,
         bookedUnits: stock.bookedUnits,
