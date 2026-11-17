@@ -89,6 +89,53 @@ export interface IAssignedUnit {
   assignedBy?: string;
 }
 
+export interface IDriverIdentity {
+  fullName?: string;
+  birthDate?: string;
+  birthPlace?: string;
+  nationality?: string;
+  address?: string;
+  phone?: string;
+  /** CIN or passport */
+  idType?: "cin" | "passport";
+  idNumber?: string;
+  idIssuedAt?: string;
+  licenceNumber?: string;
+  licenceIssuedAt?: string;
+  licenceIssuedIn?: string;
+}
+
+export interface IRentalContract {
+  number: string;
+  issuedAt: Date;
+  issuedBy?: string;
+  driver?: IDriverIdentity;
+  secondDriver?: IDriverIdentity;
+  notes?: string;
+}
+
+export interface IInspectionDamage {
+  zone: string;
+  description: string;
+  photoUrl?: string;
+}
+
+export interface IInspection {
+  at: Date;
+  by: string;
+  mileage?: number;
+  /** Fuel gauge in eighths: 0 (empty) … 8 (full). */
+  fuelLevel?: number;
+  cleanliness?: "clean" | "acceptable" | "dirty";
+  damages: IInspectionDamage[];
+  photos: string[];
+  /** Equipment present: spare wheel, jack, triangle, vest, documents… */
+  checklist?: Record<string, boolean>;
+  signatureUrl?: string;
+  customerName?: string;
+  notes?: string;
+}
+
 export interface IBooking extends Document {
   _id: mongoose.Types.ObjectId;
   bookingReference: string;
@@ -122,6 +169,17 @@ export interface IBooking extends Document {
   /** Who recorded the return, and their comments. */
   returnRecordedBy?: string;
   returnNotes?: string;
+  /** Ledger totals (minor units), recomputed from the payments collection after every movement. */
+  amountPaid?: number;
+  depositHeld?: number;
+  /** Rental contract (numbered once, identity details of the drivers). */
+  contract?: IRentalContract;
+  invoiceNumber?: string;
+  invoiceIssuedAt?: Date;
+  /** Vehicle condition reports at departure and return. */
+  pickupInspection?: IInspection;
+  returnInspection?: IInspection;
+  remindersSent?: string[];
   extensions?: { previousReturnDate: Date; newReturnDate: Date; extraDays: number; dailyRate: number; amount: number; at: Date; by?: string }[];
   cancellationReason?: string;
   rejectionReason?: string;
@@ -286,6 +344,39 @@ const BookingSchema = new Schema<IBooking>(
     returnMileage: Number,
     returnRecordedBy: String,
     returnNotes: String,
+    amountPaid: { type: Number, default: 0 },
+    depositHeld: { type: Number, default: 0 },
+    contract: {
+      number: String,
+      issuedAt: Date,
+      issuedBy: String,
+      driver: {
+        fullName: String, birthDate: String, birthPlace: String, nationality: String, address: String, phone: String,
+        idType: { type: String, enum: ["cin", "passport"] }, idNumber: String, idIssuedAt: String,
+        licenceNumber: String, licenceIssuedAt: String, licenceIssuedIn: String,
+      },
+      secondDriver: {
+        fullName: String, birthDate: String, birthPlace: String, nationality: String, address: String, phone: String,
+        idType: { type: String, enum: ["cin", "passport"] }, idNumber: String, idIssuedAt: String,
+        licenceNumber: String, licenceIssuedAt: String, licenceIssuedIn: String,
+      },
+      notes: String,
+    },
+    invoiceNumber: String,
+    invoiceIssuedAt: Date,
+    pickupInspection: {
+      at: Date, by: String, mileage: Number, fuelLevel: { type: Number, min: 0, max: 8 },
+      cleanliness: { type: String, enum: ["clean", "acceptable", "dirty"] },
+      damages: [{ zone: String, description: String, photoUrl: String }],
+      photos: [String], checklist: Schema.Types.Mixed, signatureUrl: String, customerName: String, notes: String,
+    },
+    returnInspection: {
+      at: Date, by: String, mileage: Number, fuelLevel: { type: Number, min: 0, max: 8 },
+      cleanliness: { type: String, enum: ["clean", "acceptable", "dirty"] },
+      damages: [{ zone: String, description: String, photoUrl: String }],
+      photos: [String], checklist: Schema.Types.Mixed, signatureUrl: String, customerName: String, notes: String,
+    },
+    remindersSent: [String],
     extensions: [
       {
         previousReturnDate: Date,

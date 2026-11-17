@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requirePermission } from "@/lib/permissions";
+import { can, requirePermission } from "@/lib/permissions";
+import { getSessionRole } from "@/lib/apiAuth";
 import connectDB from "@/lib/db";
 import { StoredFile } from "@/models";
 
@@ -20,8 +21,12 @@ function sniff(buf: Buffer): (typeof TYPES)[number] | null {
 
 /** POST multipart { file } → private document (PDF or photo, 8 MB max). Returns its internal URL. */
 export async function POST(request: NextRequest) {
-  const guard = await requirePermission("garage", "edit");
-  if (!guard.ok) return guard.response;
+  // Contracts of insurance (garage), expense receipts (accounting) and inspection photos (counter).
+  const { session, role } = await getSessionRole();
+  if (!session || !role || role === "client") return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  const allowed = (await can(role, "garage", "edit")) || (await can(role, "accounting", "create")) || (await can(role, "bookings", "edit"));
+  if (!allowed) return NextResponse.json({ success: false, error: "Accès limité : votre rôle ne permet pas cette action." }, { status: 403 });
+  const guard = { session };
   try {
     const form = await request.formData();
     const file = form.get("file");
@@ -38,7 +43,7 @@ export async function POST(request: NextRequest) {
       contentType,
       size: data.length,
       data,
-      purpose: "insurance",
+      purpose: ["insurance", "expense", "inspection", "signature"].includes(String(form.get("purpose"))) ? String(form.get("purpose")) : "insurance",
       uploadedBy: guard.session.user?.email || undefined,
     });
     return NextResponse.json(

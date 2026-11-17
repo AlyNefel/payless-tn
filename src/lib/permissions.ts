@@ -67,10 +67,51 @@ async function ensureSystemRoles() {
   }
 }
 
+/**
+ * Versioned grants for resources added after the roles were first created: existing system roles
+ * receive the new permissions once (later edits by the super admin are never overwritten).
+ */
+const PERMISSION_UPGRADES: { version: number; grants: Record<string, string[]> }[] = [
+  {
+    version: 2, // accounting module
+    grants: {
+      admin: [
+        "payments.view", "payments.create", "payments.delete", "payments.export",
+        "accounting.view", "accounting.create", "accounting.edit", "accounting.delete", "accounting.export",
+        "audit.view",
+      ],
+      manager: [
+        "payments.view", "payments.create", "payments.delete", "payments.export",
+        "accounting.view", "accounting.create", "accounting.edit", "accounting.export",
+      ],
+      staff: ["payments.view", "payments.create"],
+      worker: ["payments.view", "payments.create"],
+    },
+  },
+];
+
+async function applyPermissionUpgrades() {
+  const row = await AgencySetting.findOne({ key: "permissionsVersion" }).lean();
+  const current = Number(row?.value) || 1;
+  const pending = PERMISSION_UPGRADES.filter((u) => u.version > current);
+  if (!pending.length) return;
+  for (const up of pending) {
+    for (const [key, perms] of Object.entries(up.grants)) {
+      await Role.updateOne({ key, isSystem: true }, { $addToSet: { permissions: { $each: perms } } });
+    }
+  }
+  await AgencySetting.updateOne(
+    { key: "permissionsVersion" },
+    { $set: { value: Math.max(...pending.map((u) => u.version)), group: "system", label: "Version des permissions", type: "number" } },
+    { upsert: true }
+  );
+}
+
 export async function getRoles(): Promise<Map<string, RoleDef>> {
   if (cache && Date.now() - cache.at < TTL) return cache.roles;
   await connectDB();
   await ensureSystemRoles();
+  await applyPermissionUpgrades();
   const docs = await Role.find({}).sort({ isSystem: -1, createdAt: 1 }).lean();
   const roles = new Map<string, RoleDef>();
   for (const d of docs) {
