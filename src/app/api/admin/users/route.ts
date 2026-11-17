@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logAudit } from "@/lib/audit";
 import mongoose from "mongoose";
 import { z } from "zod";
 import connectDB from "@/lib/db";
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: "Cet email est déjà utilisé." }, { status: 409 });
   }
   const user = await User.create({ ...parsed.data, email, isActive: true });
+  await logAudit(guard.session, "user.create", "user", undefined, { after: { email: parsed.data.email, role: parsed.data.role } });
   return NextResponse.json(
     { success: true, user: { _id: user._id, name: user.name, email: user.email, role: user.role, isActive: true } },
     { status: 201 }
@@ -114,10 +116,15 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Il doit rester au moins un super admin actif." }, { status: 409 });
     }
   }
+  const before = { role: user.role, isActive: user.isActive, email: user.email };
   Object.assign(user, rest);
   if (password) user.password = password; // hashed by the pre-save hook
   await user.save();
   invalidateAccount(String(user._id));
+  await logAudit(guard.session, "user.update", "user", id, {
+    before,
+    after: { role: user.role, isActive: user.isActive, email: user.email, ...(password ? { password: "réinitialisé" } : {}) },
+  });
   return NextResponse.json({ success: true });
 }
 
@@ -142,5 +149,6 @@ export async function DELETE(request: NextRequest) {
   }
   await User.deleteOne({ _id: user._id });
   invalidateAccount(String(user._id));
+  await logAudit(guard.session, "user.delete", "user", id, { before: { email: user.email, role: user.role } });
   return NextResponse.json({ success: true });
 }

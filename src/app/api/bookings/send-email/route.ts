@@ -164,6 +164,7 @@ export async function POST(request: NextRequest) {
       agencyPhone,
       agencyEmail,
       agencyAddress,
+      agencyRegistration: sMap["registration"] || sMap["immatriculation"] || undefined,
       createdAt: formatDate(booking.createdAt, "fr-FR"),
     });
 

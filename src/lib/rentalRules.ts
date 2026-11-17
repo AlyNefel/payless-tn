@@ -1,10 +1,51 @@
 import connectDB from "./db";
 import AgencySetting from "@/models/AgencySetting";
-import { matchGlobalSeason, type GlobalSeason } from "./seasonalPricing";
+import { matchGlobalSeason, type DurationDiscount, type GlobalSeason } from "./seasonalPricing";
 
 export interface RentalRules {
   minRentalDaysGlobal: number;
   seasons: GlobalSeason[];
+  durationDiscounts: DurationDiscount[];
+}
+
+/** Validates the degressive tiers (sorted by duration, one tier per duration). */
+export function normalizeDiscounts(input: unknown): { tiers: DurationDiscount[]; error?: string } {
+  if (!Array.isArray(input)) return { tiers: [], error: "Liste de paliers invalide." };
+  if (input.length > 10) return { tiers: [], error: "10 paliers maximum." };
+  const tiers: DurationDiscount[] = [];
+  for (const raw of input as Record<string, unknown>[]) {
+    const minDays = Math.floor(Number(raw?.minDays));
+    const percent = Math.round(Number(raw?.percent) * 100) / 100;
+    if (!Number.isFinite(minDays) || minDays < 2 || minDays > 365) return { tiers: [], error: "Chaque palier commence entre 2 et 365 jours." };
+    if (!Number.isFinite(percent) || percent <= 0 || percent > 90) return { tiers: [], error: "Remise entre 0,01 % et 90 %." };
+    if (tiers.some((t) => t.minDays === minDays)) return { tiers: [], error: `Deux paliers commencent à ${minDays} jours.` };
+    tiers.push({ minDays, percent });
+  }
+  tiers.sort((a, b) => a.minDays - b.minDays);
+  for (let i = 1; i < tiers.length; i++) {
+    if (tiers[i].percent < tiers[i - 1].percent) return { tiers: [], error: "Un palier plus long ne peut pas avoir une remise plus faible." };
+  }
+  return { tiers };
+}
+
+export async function getDurationDiscounts(): Promise<DurationDiscount[]> {
+  try {
+    await connectDB();
+    const row = await AgencySetting.findOne({ key: "durationDiscounts" }).lean();
+    return Array.isArray(row?.value) ? normalizeDiscounts(row!.value).tiers : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function setDurationDiscounts(tiers: DurationDiscount[], userId?: string): Promise<DurationDiscount[]> {
+  await connectDB();
+  await AgencySetting.findOneAndUpdate(
+    { key: "durationDiscounts" },
+    { $set: { value: tiers, group: "booking", label: "Tarifs dégressifs (tous véhicules)", type: "json", ...(userId ? { updatedBy: userId } : {}) } },
+    { upsert: true }
+  );
+  return tiers;
 }
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -63,8 +104,8 @@ export async function setGlobalSeasons(seasons: GlobalSeason[], userId?: string)
 
 /** Every fleet-wide rule, read from the database on each call (no cache: changes are live). */
 export async function getRentalRules(): Promise<RentalRules> {
-  const [minRentalDaysGlobal, seasons] = await Promise.all([getGlobalMinRentalDays(), getGlobalSeasons()]);
-  return { minRentalDaysGlobal, seasons: seasons.filter((s) => s.active !== false) };
+  const [minRentalDaysGlobal, seasons, durationDiscounts] = await Promise.all([getGlobalMinRentalDays(), getGlobalSeasons(), getDurationDiscounts()]);
+  return { minRentalDaysGlobal, seasons: seasons.filter((s) => s.active !== false), durationDiscounts };
 }
 
 /**
@@ -79,7 +120,7 @@ export function applyRules<T extends { minRentalDays?: number; pricing?: any }>(
     ...vehicle,
     minRentalDays: base,
     minRentalDaysForPeriod: min,
-    pricing: { ...(vehicle.pricing || {}), minRentalDays: base, globalSeasons: rules.seasons },
+    pricing: { ...(vehicle.pricing || {}), minRentalDays: base, globalSeasons: rules.seasons, durationDiscounts: rules.durationDiscounts },
   };
 }
 
@@ -126,5 +167,5 @@ export function effectiveMinDays(
 /** Plain pricing object (vehicle + fleet-wide periods) for the server-side price calculation. */
 export function priceSource(vehicle: any, rules: RentalRules): { minRentalDays?: number; pricing: any } {
   const pricing = vehicle?.pricing?.toObject ? vehicle.pricing.toObject() : { ...(vehicle?.pricing || {}) };
-  return { minRentalDays: vehicle?.minRentalDays, pricing: { ...pricing, globalSeasons: rules.seasons } };
+  return { minRentalDays: vehicle?.minRentalDays, pricing: { ...pricing, globalSeasons: rules.seasons, durationDiscounts: rules.durationDiscounts } };
 }

@@ -77,6 +77,8 @@ export interface PDFBookingData {
   agencyPhone?: string;
   agencyEmail?: string;
   agencyAddress?: string;
+  /** "RC … - MF …" from Paramètres → Agence. */
+  agencyRegistration?: string;
   createdAt?: string;
   /** Booking status shown in the header (defaults to "confirmed"). */
   bookingStatus?: string;
@@ -135,7 +137,7 @@ export function generateBookingPDF(data: PDFBookingData): Buffer {
   doc.text("HOUIMLI RENT A CAR SARL — Location de Véhicules Touristiques", marginLeft, y + 10.5);
   doc.text(`Adresse : ${agencyAddress}`, marginLeft, y + 15, { maxWidth: 104 });
   doc.text(`Tél : ${agencyPhone}  |  Email : ${agencyEmail}`, marginLeft, y + 19.5);
-  doc.text("Matricule Fiscal : 1234567/A/M/000", marginLeft, y + 24);
+  doc.text(data.agencyRegistration || "RC Ariana B0123452020 - MF 1234567/A/M/000", marginLeft, y + 24);
 
   // Right Side: white meta card on the band
   const metaBoxWidth = 72;

@@ -33,7 +33,7 @@ interface Vehicle {
   status: string;
   pricing: { daily: number; currency: string; deposit?: number };
   /** Price and minimum duration for the selected period, computed by the server. */
-  periodPricing?: { dailyRate: number; baseDailyRate: number; days: number | null; total: number | null; periodName: string; minDays: number; meetsMinimum: boolean };
+  periodPricing?: { dailyRate: number; baseDailyRate: number; days: number | null; total: number | null; periodName: string; minDays: number; meetsMinimum: boolean; discountPercent?: number };
   deposit?: number;
   features?: string[];
   hasAirConditioning?: boolean;
@@ -134,7 +134,8 @@ function VehiclesContent() {
       if (transmission) params.set("transmission", transmission);
       if (fuelType) params.set("fuelType", fuelType);
       if (seats) params.set("seats", String(seats));
-      if (maxPrice < 300) params.set("maxPrice", String(maxPrice * 100));
+      // In dinars: the API reads values under 10 000 as TND (minor units above).
+      if (maxPrice < 300) params.set("maxPrice", String(maxPrice));
       if (pickupDate) params.set("pickupDate", pickupDate);
       if (returnDate) params.set("returnDate", returnDate);
       params.set("sort", sortBy);
@@ -542,6 +543,7 @@ function VehiclesContent() {
                               {Math.round(v.periodPricing.total / 100)} TND · {v.periodPricing.days}{" "}
                               {locale === "ar" ? "أيام" : locale === "en" ? "days" : "jours"}
                               {v.periodPricing.periodName ? ` · ${v.periodPricing.periodName}` : ""}
+                              {v.periodPricing.discountPercent ? ` · -${v.periodPricing.discountPercent} %` : ""}
                             </div>
                           ) : null}
                           <div className="text-[11px] text-muted-foreground">

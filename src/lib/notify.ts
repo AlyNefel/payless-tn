@@ -157,6 +157,8 @@ export async function runFleetAlerts(opts: { force?: boolean; minIntervalMs?: nu
   if (!opts.force && Date.now() - lastRun < interval) return 0;
   if (running) return running;
   lastRun = Date.now();
+  // Customer reminders piggy-back on the same heartbeat (at most hourly) when no cron calls them.
+  import("./reminders").then((m) => m.runRemindersThrottled()).catch(() => {});
   running = doRunFleetAlerts().finally(() => {
     running = null;
   });

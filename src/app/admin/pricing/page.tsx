@@ -21,6 +21,7 @@ import {
 import Image from "next/image";
 import { GlobalMinRentalCard } from "@/components/admin/GlobalMinRentalCard";
 import { GlobalSeasonsCard } from "@/components/admin/GlobalSeasonsCard";
+import { DurationDiscountsCard } from "@/components/admin/DurationDiscountsCard";
 
 interface SeasonalPeriod {
   name: string;
@@ -251,6 +252,7 @@ export default function AdminPricingPage() {
 
       <GlobalMinRentalCard />
       <GlobalSeasonsCard />
+      <DurationDiscountsCard />
       {/* Search & Actions Bar */}
       <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div className="relative w-full sm:w-96">
