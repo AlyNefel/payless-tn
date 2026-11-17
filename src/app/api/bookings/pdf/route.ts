@@ -137,6 +137,7 @@ export async function GET(request: NextRequest) {
       agencyPhone,
       agencyEmail,
       agencyAddress,
+      agencyRegistration: sMap["registration"] || sMap["immatriculation"] || undefined,
       createdAt: formatDate(booking.createdAt, "fr-FR"),
     });
 

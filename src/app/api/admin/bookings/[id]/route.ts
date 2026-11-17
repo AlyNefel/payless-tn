@@ -12,6 +12,7 @@ import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected } from
 import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
 import { getRentalRules, priceSource } from "@/lib/rentalRules";
 import { bookingMoney, recordPayment, resyncAfterPriceChange } from "@/lib/ledger";
+import { logAudit } from "@/lib/audit";
 import { getVehicleStockAvailability } from "@/lib/availability";
 import {
   assignUnitManually,
@@ -121,7 +122,13 @@ export async function PATCH(
           );
         }
       }
-      return handleAction(id, body, session.user?.email || "Admin");
+      const res = await handleAction(id, body, session.user?.email || "Admin");
+      if (res.status < 300 && ["change_return", "extend", "record_pickup", "record_return", "assign_unit", "inspection"].includes(body.action)) {
+        const { action, damages, photos, checklist, signatureUrl, ...detail } = body as Record<string, unknown>;
+        void damages; void photos; void checklist; void signatureUrl;
+        await logAudit(session, `booking.${action}`, "booking", id, { after: detail });
+      }
+      return res;
     }
 
     const parsed = updateSchema.safeParse(body);
@@ -367,6 +374,20 @@ export async function PATCH(
       .populate("pickupLocationId")
       .populate("returnLocationId");
     if (updates.pricingBreakdown) await resyncAfterPriceChange(id);
+    await logAudit(session, updates.pricingBreakdown ? "booking.price" : "booking.update", "booking", id, {
+      before: {
+        status: oldBooking.bookingStatus,
+        pickup: oldBooking.pickupDate?.toISOString().slice(0, 10),
+        return: oldBooking.returnDate?.toISOString().slice(0, 10),
+        total: oldBooking.pricingBreakdown?.totalAmount,
+      },
+      after: {
+        status: booking?.bookingStatus,
+        pickup: booking?.pickupDate?.toISOString().slice(0, 10),
+        return: booking?.returnDate?.toISOString().slice(0, 10),
+        total: booking?.pricingBreakdown?.totalAmount,
+      },
+    });
 
     if (!booking) return NextResponse.json({ error: "Booking not found" }, { status: 404 });
 

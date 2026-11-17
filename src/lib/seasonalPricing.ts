@@ -29,6 +29,21 @@ export interface GlobalSeason {
   active?: boolean;
 }
 
+/** Fleet-wide degressive tariff: from `minDays` days of rental, `percent` % off the daily rate. */
+export interface DurationDiscount {
+  minDays: number;
+  percent: number;
+}
+
+/** Best discount tier reached by a rental of `days` days (0 when none). */
+export function durationDiscountPercent(days: number, tiers: DurationDiscount[] | undefined | null): number {
+  let best = 0;
+  for (const t of tiers || []) {
+    if (days >= Number(t.minDays) && Number(t.percent) > best) best = Number(t.percent);
+  }
+  return Math.max(0, Math.min(90, best));
+}
+
 /** Calendar day "YYYY-MM-DD" of a date or string — never shifted by the browser time zone. */
 export function dayKey(d: Date | string | undefined | null): string {
   if (!d) return new Date().toISOString().slice(0, 10);
@@ -152,7 +167,7 @@ export function calculateSeasonalRentalTotal(
   vehicle: any,
   pickupDate: string,
   returnDate: string
-): { subtotal: number; averageDailyRate: number; days: number } {
+): { subtotal: number; averageDailyRate: number; days: number; discountPercent?: number } {
   if (!vehicle || !pickupDate || !returnDate) {
     return { subtotal: 0, averageDailyRate: 0, days: 1 };
   }
@@ -160,8 +175,14 @@ export function calculateSeasonalRentalTotal(
   const start = dayKey(pickupDate);
   const days = computeRentalDays(pickupDate, returnDate);
 
-  const lockedDailyRate = getVehicleEffectiveDailyRate(vehicle, start);
+  let lockedDailyRate = getVehicleEffectiveDailyRate(vehicle, start);
+  // Degressive tariff: longer rentals get a lower daily rate (kept on whole dinars).
+  const discountPercent = durationDiscountPercent(days, vehicle.pricing?.durationDiscounts);
+  if (discountPercent > 0 && lockedDailyRate > 0) {
+    const unit = lockedDailyRate >= 1000 ? 100 : 1;
+    lockedDailyRate = Math.max(unit, Math.round((lockedDailyRate * (1 - discountPercent / 100)) / unit) * unit);
+  }
   const subtotal = lockedDailyRate * days;
 
-  return { subtotal, averageDailyRate: lockedDailyRate, days };
+  return { subtotal, averageDailyRate: lockedDailyRate, days, discountPercent };
 }

@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        run: npx eslint src --quiet
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Build
+        run: npx next build --webpack || npx next build --webpack
+        env:
+          AUTH_SECRET: ci-secret-0123456789abcdef0123456789
+      - name: Integration tests (in-memory database)
+        run: npm test
