@@ -25,7 +25,6 @@ import { StatusBadge, btn, usePermissions } from "@/components/admin/ui";
 import { BookingQuickView } from "@/components/admin/BookingQuickView";
 import { InspectionSheet } from "@/components/admin/InspectionSheet";
 import { BookingPayments } from "@/components/admin/accounting/BookingPayments";
-import { ContractForm } from "@/components/admin/accounting/ContractForm";
 import { Modal } from "@/components/admin/accounting/shared";
 import { dt } from "@/lib/accountingLabels";
 
@@ -85,7 +84,6 @@ export default function WorkerPage() {
   const [viewing, setViewing] = useState<Row | null>(null);
   const [inspecting, setInspecting] = useState<{ row: Row; stage: "pickup" | "return" } | null>(null);
   const [paying, setPaying] = useState<Row | null>(null);
-  const [contract, setContract] = useState<Row | null>(null);
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback(async () => {
@@ -284,9 +282,9 @@ export default function WorkerPage() {
                     </button>
                   )}
                   {open && (
-                    <button type="button" onClick={() => setContract(r)} className={`${big} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}>
+                    <Link href={`/admin/bookings/${r._id}/contrat`} className={`${big} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}>
                       <FileText className="w-4 h-4" /> Contrat
-                    </button>
+                    </Link>
                   )}
                   <button type="button" onClick={() => setViewing(r)} className={`${big} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 col-span-2`}>
                     <Eye className="w-4 h-4" /> Voir la réservation
@@ -338,7 +336,6 @@ export default function WorkerPage() {
       <Modal open={Boolean(paying)} onClose={() => setPaying(null)} title={paying ? `${paying.reference} — ${paying.customerName}` : ""} wide>
         {paying && <BookingPayments bookingId={paying._id} onChanged={load} compact />}
       </Modal>
-      <ContractForm bookingId={contract?._id || null} title={contract?.customerName} onClose={() => setContract(null)} onSaved={load} />
 
       <BookingQuickView
         booking={viewing ? { ...viewing } : null}

@@ -30,6 +30,9 @@ export interface InspectionValue {
   checklist?: Record<string, boolean>;
   customerName?: string;
   notes?: string;
+  signatureUrl?: string;
+  at?: string;
+  by?: string;
 }
 
 /** Finger / mouse signature. Returns a PNG blob, or null when nothing was drawn. */
@@ -94,11 +97,48 @@ function SignaturePad({ onReady }: { onReady: (get: () => Promise<Blob | null>, 
   return <canvas ref={ref} aria-label="Zone de signature du client" className="w-full h-36 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 bg-white touch-none" />;
 }
 
+type SheetProps = {
+  bookingId: string;
+  stage: "pickup" | "return";
+  title: string;
+  /** Saved report. When omitted, the saved report is loaded from the booking so editing never starts blank. */
+  initial?: InspectionValue | null;
+  /** Departure mileage: the return value cannot be lower. */
+  minMileage?: number | null;
+  defaultCustomer?: string;
+  onClose: () => void;
+  onSaved: () => void;
+};
+
 /**
  * Vehicle condition report at departure or at return: mileage, fuel, equipment, damages with
  * photos, and the customer's signature. Printed on the rental contract.
  */
-export function InspectionSheet({
+export function InspectionSheet(props: SheetProps) {
+  const { bookingId, stage, initial } = props;
+  const [loaded, setLoaded] = useState<InspectionValue | null | undefined>(initial);
+  const [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    if (initial !== undefined) return;
+    let alive = true;
+    api<{ booking: Record<string, unknown> }>(`/api/admin/bookings/${bookingId}`)
+      .then((d) => alive && setLoaded((d.booking?.[stage === "pickup" ? "pickupInspection" : "returnInspection"] as InspectionValue) || null))
+      .catch((e) => alive && setLoadError(e instanceof Error ? e.message : "Chargement impossible"));
+    return () => {
+      alive = false;
+    };
+  }, [bookingId, stage, initial]);
+  if (loaded === undefined) {
+    return (
+      <Modal open onClose={props.onClose} title={stage === "pickup" ? "État des lieux de départ" : "État des lieux de retour"}>
+        {loadError ? <ErrorNote text={loadError} /> : <Loader2 className="w-5 h-5 animate-spin text-slate-400" />}
+      </Modal>
+    );
+  }
+  return <InspectionForm {...props} initial={loaded} />;
+}
+
+function InspectionForm({
   bookingId,
   stage,
   title,
@@ -107,17 +147,7 @@ export function InspectionSheet({
   defaultCustomer,
   onClose,
   onSaved,
-}: {
-  bookingId: string;
-  stage: "pickup" | "return";
-  title: string;
-  initial?: InspectionValue | null;
-  /** Departure mileage: the return value cannot be lower. */
-  minMileage?: number | null;
-  defaultCustomer?: string;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
+}: SheetProps) {
   const [mileage, setMileage] = useState(initial?.mileage !== undefined ? String(initial.mileage) : "");
   const [fuel, setFuel] = useState<number | undefined>(initial?.fuelLevel);
   const [clean, setClean] = useState(initial?.cleanliness || "clean");
@@ -126,6 +156,8 @@ export function InspectionSheet({
   const [photos, setPhotos] = useState<string[]>(initial?.photos || []);
   const [customer, setCustomer] = useState(initial?.customerName || defaultCustomer || "");
   const [notes, setNotes] = useState(initial?.notes || "");
+  /** Signature already on file: kept unless the customer signs again. */
+  const [savedSignature, setSavedSignature] = useState(initial?.signatureUrl || "");
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -159,7 +191,7 @@ export function InspectionSheet({
     setBusy(true);
     setError("");
     try {
-      let signatureUrl: string | undefined;
+      let signatureUrl: string | undefined = savedSignature || undefined;
       const blob = await sign.current?.get();
       if (blob) signatureUrl = await uploadDocument(new File([blob], "signature.png", { type: "image/png" }), "signature");
       await api(`/api/admin/bookings/${bookingId}`, {
@@ -242,6 +274,12 @@ export function InspectionSheet({
                 <input aria-label="Description" className={inputCls} value={d.description} placeholder="Ex. rayure 10 cm, pare-chocs enfoncé" onChange={(e) => setDamages(damages.map((x, k) => (k === i ? { ...x, description: e.target.value } : x)))} />
               </div>
               <div className="flex items-start gap-1">
+                {d.photoUrl && (
+                  <a href={d.photoUrl} target="_blank" rel="noopener noreferrer" aria-label="Voir la photo du dommage">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={d.photoUrl} alt="" className="w-10 h-10 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
+                  </a>
+                )}
                 <label className={`${btn.base} ${d.photoUrl ? btn.success : btn.secondary} h-10 px-2.5 cursor-pointer`} aria-label="Photo du dommage">
                   <Camera className="w-4 h-4" />
                   <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => addPhotos(e.target.files, i)} />
@@ -259,8 +297,10 @@ export function InspectionSheet({
         <div className="flex flex-wrap gap-2">
           {photos.map((url, i) => (
             <div key={url} className="relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={url} alt={`Photo ${i + 1}`} className="w-20 h-20 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
+              <a href={url} target="_blank" rel="noopener noreferrer">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={url} alt={`Photo ${i + 1}`} className="w-20 h-20 object-cover rounded-lg border border-slate-200 dark:border-slate-700" />
+              </a>
               <button type="button" aria-label={`Retirer la photo ${i + 1}`} onClick={() => setPhotos(photos.filter((p) => p !== url))} className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-red-600 text-white">
                 <Trash2 className="w-3 h-3" />
               </button>
@@ -280,13 +320,26 @@ export function InspectionSheet({
       <div>
         <div className="flex items-center justify-between gap-2">
           <span className={labelCls}>Signature du client</span>
-          <button type="button" onClick={() => sign.current?.clear()} className={`${btn.base} ${btn.secondary} h-8`}>
-            <Eraser className="w-3.5 h-3.5" /> Effacer
-          </button>
+          {!savedSignature && (
+            <button type="button" onClick={() => sign.current?.clear()} className={`${btn.base} ${btn.secondary} h-8`}>
+              <Eraser className="w-3.5 h-3.5" /> Effacer
+            </button>
+          )}
         </div>
         <input className={`${inputCls} mb-2`} value={customer} placeholder="Nom du signataire" onChange={(e) => setCustomer(e.target.value)} />
-        <SignaturePad onReady={(get, clear) => (sign.current = { get, clear })} />
-        <p className="mt-1 text-[11px] text-slate-500">Le client signe avec le doigt. La signature est imprimée sur le contrat.</p>
+        {savedSignature ? (
+          <div className="flex items-center gap-3 p-2 rounded-xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/60 dark:bg-emerald-950/20">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={savedSignature} alt="Signature enregistrée" className="h-16 max-w-[60%] object-contain bg-white rounded-lg" />
+            <div className="flex-1 text-[11px] text-emerald-800 dark:text-emerald-300 font-semibold">Signature déjà enregistrée.</div>
+            <button type="button" onClick={() => setSavedSignature("")} className={`${btn.base} ${btn.secondary} h-8`}>Refaire signer</button>
+          </div>
+        ) : (
+          <>
+            <SignaturePad onReady={(get, clear) => (sign.current = { get, clear })} />
+            <p className="mt-1 text-[11px] text-slate-500">Le client signe avec le doigt. La signature est imprimée sur le contrat.</p>
+          </>
+        )}
       </div>
     </Modal>
   );

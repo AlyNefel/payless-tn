@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import connectDB from "./db";
 import { Booking, Payment, StoredFile } from "@/models";
-import type { IBooking, IDriverIdentity } from "@/models/Booking";
+import type { IBillingInfo, IBooking, IDriverIdentity } from "@/models/Booking";
 import { nextNumber } from "@/models/Counter";
 import { getCompanyInfo, type ContractData, type InvoiceData } from "./pdfDocs";
 import { bookingMoney, getVatRate, splitVat, PAYMENT_METHOD_LABELS } from "./ledger";
@@ -135,8 +135,25 @@ export async function contractData(booking: IBooking): Promise<ContractData> {
     out: insp(booking.pickupInspection, booking.pickupMileage),
     back: insp(booking.returnInspection, booking.returnMileage),
     customerSignature: await signatureDataUrl(booking.pickupInspection?.signatureUrl),
+    notes: booking.contract?.notes || undefined,
     minAge: Number(settings.minRentalAge) || 21,
     assistancePhone: String(settings.phone || ""),
+  };
+}
+
+/** Invoice recipient: the customer / main driver, overridden by what was typed for the invoice. */
+export function billingDefaults(booking: IBooking): IBillingInfo {
+  const c = (booking as unknown as Populated).customerId;
+  const driver = defaultDriver(booking);
+  const saved = JSON.parse(JSON.stringify(booking.billing || {})) as IBillingInfo;
+  const clean = Object.fromEntries(Object.entries(saved).filter(([, v]) => v !== "" && v != null));
+  return {
+    name: driver.fullName || `${c?.firstName || ""} ${c?.lastName || ""}`.trim(),
+    address: driver.address || "",
+    idNumber: driver.idNumber || "",
+    taxId: "",
+    notes: "",
+    ...clean,
   };
 }
 
@@ -172,14 +189,17 @@ export async function invoiceData(booking: IBooking): Promise<InvoiceData> {
   const { ht, vat } = splitVat(taxableTTC, vatRate);
   const c = p.customerId;
   const driver = defaultDriver(booking);
+  const bill = billingDefaults(booking);
   return {
     company,
     number: booking.invoiceNumber || "",
     issuedAt: booking.invoiceIssuedAt || new Date(),
     bookingReference: booking.bookingReference,
-    customerName: `${c?.firstName || ""} ${c?.lastName || ""}`.trim(),
-    customerAddress: driver.address,
-    customerId: driver.idNumber,
+    customerName: bill.name || `${c?.firstName || ""} ${c?.lastName || ""}`.trim(),
+    customerAddress: bill.address || driver.address,
+    customerId: bill.idNumber || driver.idNumber,
+    customerTaxId: bill.taxId || undefined,
+    notes: bill.notes || undefined,
     lines,
     taxableTTC,
     vatRate,

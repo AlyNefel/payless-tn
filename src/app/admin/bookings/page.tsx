@@ -20,6 +20,8 @@ import {
   FileText,
   RefreshCw,
   MoreVertical,
+  FileSignature,
+  Receipt,
   ChevronDown,
   Trash2,
   MessageCircle,
@@ -265,7 +267,11 @@ export default function AdminBookingsPage() {
     const bookingRef = b.reference || b.bookingReference || bookingId;
     const wa = whatsappUrlFor(b);
     const extra = [
-      { key: "pdf", label: "Facture PDF", icon: FileText, href: `/api/bookings/pdf?ref=${bookingRef}`, external: true },
+      { key: "contract", label: "Contrat", icon: FileSignature, href: `/admin/bookings/${bookingId}/contrat` },
+      ...(can("payments.view") && !["pending", "cancelled", "rejected"].includes(b.status)
+        ? [{ key: "invoice", label: "Facture", icon: Receipt, href: `/admin/bookings/${bookingId}/facture` }]
+        : []),
+      { key: "pdf", label: "Bon de réservation (PDF)", icon: FileText, href: `/api/bookings/pdf?ref=${bookingRef}`, external: true },
       {
         key: "voucher",
         label: "Bon de réservation",

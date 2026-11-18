@@ -1,11 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { FileText, Loader2 } from "lucide-react";
-import { btn } from "@/components/admin/ui";
-import { ErrorNote, Modal, api, inputCls, labelCls } from "./shared";
+import { inputCls, labelCls } from "./shared";
 
-interface Identity {
+/** Identity of a driver as printed on the rental contract. */
+export interface Identity {
   fullName?: string;
   birthDate?: string;
   birthPlace?: string;
@@ -34,7 +32,7 @@ const FIELDS: [keyof Identity, string, string?][] = [
   ["licenceIssuedIn", "Permis délivré à"],
 ];
 
-function IdentityFields({ value, onChange }: { value: Identity; onChange: (v: Identity) => void }) {
+export function IdentityFields({ value, onChange }: { value: Identity; onChange: (v: Identity) => void }) {
   return (
     <div className="grid grid-cols-2 gap-2.5">
       <label className="col-span-2">
@@ -51,80 +49,5 @@ function IdentityFields({ value, onChange }: { value: Identity; onChange: (v: Id
         </label>
       ))}
     </div>
-  );
-}
-
-/** Identity of the driver(s) printed on the rental contract, then opens the contract PDF. */
-export function ContractForm({ bookingId, title, onClose, onSaved }: { bookingId: string | null; title?: string; onClose: () => void; onSaved?: () => void }) {
-  const [driver, setDriver] = useState<Identity>({});
-  const [second, setSecond] = useState<Identity>({});
-  const [withSecond, setWithSecond] = useState(false);
-  const [number, setNumber] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!bookingId) return;
-    setLoading(true);
-    setError("");
-    api<{ driver: Identity; secondDriver: Identity; number: string }>(`/api/admin/bookings/${bookingId}/contract?data=1`)
-      .then((d) => {
-        setDriver(d.driver || {});
-        setSecond(d.secondDriver || {});
-        setWithSecond(Boolean(d.secondDriver?.fullName));
-        setNumber(d.number);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [bookingId]);
-
-  const save = async (thenOpen: boolean) => {
-    if (!bookingId) return;
-    setSaving(true);
-    setError("");
-    try {
-      await api(`/api/admin/bookings/${bookingId}/contract`, { method: "PUT", body: JSON.stringify({ driver, secondDriver: withSecond ? second : undefined }) });
-      onSaved?.();
-      if (thenOpen) window.open(`/api/admin/bookings/${bookingId}/contract`, "_blank", "noopener");
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Enregistrement impossible");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={Boolean(bookingId)}
-      onClose={onClose}
-      wide
-      title={`Contrat de location${number ? ` ${number}` : ""}${title ? ` — ${title}` : ""}`}
-      footer={
-        <>
-          <button type="button" onClick={onClose} className={`${btn.base} ${btn.secondary}`}>Annuler</button>
-          <button type="button" onClick={() => save(false)} disabled={saving || loading} className={`${btn.base} ${btn.secondary}`}>Enregistrer</button>
-          <button type="button" onClick={() => save(true)} disabled={saving || loading} className={`${btn.base} ${btn.primary}`}>
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />} Enregistrer & ouvrir le contrat
-          </button>
-        </>
-      }
-    >
-      {loading ? (
-        <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-      ) : (
-        <>
-          <ErrorNote text={error} />
-          <p className="text-slate-500">Les champs laissés vides sont imprimés en pointillés pour être complétés à la main.</p>
-          <h3 className="text-xs font-bold text-slate-900 dark:text-white">Locataire (conducteur principal)</h3>
-          <IdentityFields value={driver} onChange={setDriver} />
-          <label className="inline-flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-200">
-            <input type="checkbox" checked={withSecond} onChange={(e) => setWithSecond(e.target.checked)} /> Conducteur additionnel
-          </label>
-          {withSecond && <IdentityFields value={second} onChange={setSecond} />}
-        </>
-      )}
-    </Modal>
   );
 }

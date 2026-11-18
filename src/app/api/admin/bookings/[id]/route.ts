@@ -570,6 +570,9 @@ async function handleAction(id: string, body: unknown, by: string) {
     if (a.stage === "return" && typeof a.mileage === "number" && typeof booking.pickupMileage === "number" && a.mileage < booking.pickupMileage) {
       return NextResponse.json({ error: `Kilométrage retour inférieur au kilométrage de départ (${booking.pickupMileage} km).` }, { status: 400 });
     }
+    // Editing a report must never silently drop the customer's signature: keep the previous one
+    // unless a new one was drawn.
+    const previous = booking.get(key) as { signatureUrl?: string } | undefined;
     booking.set(key, {
       at: new Date(),
       by,
@@ -579,7 +582,7 @@ async function handleAction(id: string, body: unknown, by: string) {
       damages: a.damages,
       photos: a.photos,
       checklist: a.checklist,
-      signatureUrl: a.signatureUrl,
+      signatureUrl: a.signatureUrl || previous?.signatureUrl,
       customerName: a.customerName,
       notes: a.notes,
     });

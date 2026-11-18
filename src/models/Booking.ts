@@ -114,6 +114,17 @@ export interface IRentalContract {
   notes?: string;
 }
 
+/** Invoice recipient, overriding the customer record (company name, tax ID…). */
+export interface IBillingInfo {
+  name?: string;
+  address?: string;
+  idNumber?: string;
+  /** Matricule fiscal of a business customer. */
+  taxId?: string;
+  /** Free text printed on the invoice. */
+  notes?: string;
+}
+
 export interface IInspectionDamage {
   zone: string;
   description: string;
@@ -176,6 +187,7 @@ export interface IBooking extends Document {
   contract?: IRentalContract;
   invoiceNumber?: string;
   invoiceIssuedAt?: Date;
+  billing?: IBillingInfo;
   /** Vehicle condition reports at departure and return. */
   pickupInspection?: IInspection;
   returnInspection?: IInspection;
@@ -364,6 +376,7 @@ const BookingSchema = new Schema<IBooking>(
     },
     invoiceNumber: String,
     invoiceIssuedAt: Date,
+    billing: { name: String, address: String, idNumber: String, taxId: String, notes: String },
     pickupInspection: {
       at: Date, by: String, mileage: Number, fuelLevel: { type: Number, min: 0, max: 8 },
       cleanliness: { type: String, enum: ["clean", "acceptable", "dirty"] },

@@ -30,6 +30,9 @@ import {
 } from "lucide-react";
 import { SelectedOptionsList } from "@/components/booking/SelectedOptionsList";
 import { BookingOperationsPanel, type UnitOption } from "@/components/admin/BookingOperationsPanel";
+import { InspectionSummary } from "@/components/admin/InspectionSummary";
+import type { InspectionValue } from "@/components/admin/InspectionSheet";
+import { usePermissions } from "@/components/admin/ui";
 
 interface PopulatedBooking {
   _id: string;
@@ -122,6 +125,8 @@ interface PopulatedBooking {
   };
   assignedUnits?: Array<{ vehicleId: string; unitId?: string; licensePlate: string; auto?: boolean }>;
   pickupMileage?: number;
+  pickupInspection?: InspectionValue | null;
+  returnInspection?: InspectionValue | null;
   returnMileage?: number;
   auditHistory?: Array<{
     timestamp: string;
@@ -135,6 +140,7 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const router = useRouter();
 
+  const { can } = usePermissions();
   const [booking, setBooking] = useState<PopulatedBooking | null>(null);
   const [unitOptions, setUnitOptions] = useState<Record<string, UnitOption[]>>({});
   const [loading, setLoading] = useState(true);
@@ -368,16 +374,22 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <a
-            href={`/api/bookings/pdf?ref=${booking.bookingReference}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-900 bg-slate-900 text-white hover:bg-black text-xs font-semibold shadow-xs transition-colors"
-            title="Télécharger la facture officielle en noir & blanc"
+          <Link
+            href={`/admin/bookings/${booking._id}/contrat`}
+            className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-50 dark:hover:bg-slate-700/60 shadow-xs"
           >
             <FileText className="w-4 h-4" />
-            <span>Facture PDF (N&B)</span>
-          </a>
+            <span>Contrat</span>
+          </Link>
+          {!["pending", "cancelled", "rejected"].includes(booking.bookingStatus) && (
+            <Link
+              href={`/admin/bookings/${booking._id}/facture`}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-900 bg-slate-900 text-white hover:bg-black text-xs font-semibold shadow-xs transition-colors"
+            >
+              <FileText className="w-4 h-4" />
+              <span>Facture</span>
+            </Link>
+          )}
 
           <button
             onClick={() => window.print()}
@@ -454,6 +466,17 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
         unitOptions={unitOptions}
         customerPhone={booking.customerId?.phone}
         customerName={booking.customerId?.firstName}
+        onChanged={() => fetchBooking(true)}
+      />
+
+      <InspectionSummary
+        bookingId={booking._id}
+        title={`${booking.bookingReference} · ${booking.vehicleId?.brand || ""} ${booking.vehicleId?.model || ""}`.trim()}
+        pickup={booking.pickupInspection}
+        back={booking.returnInspection}
+        pickupMileage={booking.pickupMileage}
+        customerName={`${booking.customerId?.firstName || ""} ${booking.customerId?.lastName || ""}`.trim()}
+        canEdit={can("bookings.edit")}
         onChanged={() => fetchBooking(true)}
       />
 

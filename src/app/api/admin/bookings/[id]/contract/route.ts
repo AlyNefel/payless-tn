@@ -24,6 +24,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       number: booking.contract?.number || "",
       driver: defaultDriver(booking),
       secondDriver: booking.contract?.secondDriver || {},
+      notes: booking.contract?.notes || "",
     });
   }
   if (["cancelled", "rejected"].includes(booking.bookingStatus)) {
@@ -49,23 +50,24 @@ const identity = z.object({
   idNumber: text, idIssuedAt: text, licenceNumber: text, licenceIssuedAt: text, licenceIssuedIn: text,
 });
 
-/** PUT { driver, secondDriver? } → identity details printed on the contract. */
+/** PUT { driver, secondDriver?, notes? } → identity details and special conditions printed on the contract. */
 export async function PUT(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requirePermission("bookings", "edit");
   if (!guard.ok) return guard.response;
   const { id } = await params;
-  const parsed = z.object({ driver: identity, secondDriver: identity.optional() }).safeParse(await request.json().catch(() => ({})));
+  const parsed = z.object({ driver: identity, secondDriver: identity.optional(), notes: z.string().trim().max(1200).optional() }).safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ success: false, error: parsed.error.issues[0]?.message || "Données invalides" }, { status: 400 });
   const booking = await loadBookingForDocs(id);
   if (!booking) return NextResponse.json({ success: false, error: "Réservation introuvable" }, { status: 404 });
   const second = parsed.data.secondDriver;
   const hasSecond = second && Object.entries(second).some(([k, v]) => k !== "idType" && v);
-  await Booking.updateOne(
-    { _id: booking._id },
-    hasSecond
-      ? { $set: { "contract.driver": parsed.data.driver, "contract.secondDriver": second } }
-      : { $set: { "contract.driver": parsed.data.driver }, $unset: { "contract.secondDriver": 1 } }
-  );
-  await logAudit(guard.session, "contract.identity", "booking", id, { after: { driver: parsed.data.driver.fullName, secondDriver: hasSecond ? second?.fullName : undefined } });
+  const set: Record<string, unknown> = { "contract.driver": parsed.data.driver };
+  if (hasSecond) set["contract.secondDriver"] = second;
+  if (parsed.data.notes !== undefined) set["contract.notes"] = parsed.data.notes;
+  await Booking.updateOne({ _id: booking._id }, hasSecond ? { $set: set } : { $set: set, $unset: { "contract.secondDriver": 1 } });
+  await logAudit(guard.session, "contract.identity", "booking", id, {
+    before: { driver: booking.contract?.driver?.fullName, notes: booking.contract?.notes },
+    after: { driver: parsed.data.driver.fullName, secondDriver: hasSecond ? second?.fullName : undefined, notes: parsed.data.notes },
+  });
   return NextResponse.json({ success: true });
 }

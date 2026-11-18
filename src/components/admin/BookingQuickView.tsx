@@ -118,8 +118,11 @@ export function BookingQuickView({ booking, onClose }: { booking: BookingSummary
             </a>
           )}
           <a href={`/api/bookings/pdf?ref=${full?.bookingReference || booking.reference}`} target="_blank" rel="noopener noreferrer" className={`${btn.base} ${btn.secondary}`}>
-            <FileText className="w-4 h-4" /> PDF
+            <FileText className="w-4 h-4" /> Bon PDF
           </a>
+          <Link href={`${editHref}/contrat`} className={`${btn.base} ${btn.secondary}`}>
+            <FileText className="w-4 h-4" /> Contrat
+          </Link>
           <Link href={editHref} className={`${btn.base} ${btn.primary} px-5 h-10 text-sm`}>
             <SquarePen className="w-4 h-4" /> Voir & modifier
           </Link>

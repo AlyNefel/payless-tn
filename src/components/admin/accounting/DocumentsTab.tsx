@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Banknote, FileText, Loader2, Receipt, Search } from "lucide-react";
-import { StatusBadge, ViewToggle, btn, usePermissions, useViewMode } from "@/components/admin/ui";
+import { StatusBadge, ViewToggle, btn, useViewMode } from "@/components/admin/ui";
 import { dt } from "@/lib/accountingLabels";
 import { BookingPayments } from "./BookingPayments";
-import { ContractForm } from "./ContractForm";
+import Link from "next/link";
 import { Empty, ErrorNote, Modal, api, cardCls, frDay, inputCls, tdCls, thCls } from "./shared";
 
 interface Row {
@@ -26,14 +26,12 @@ interface Row {
 
 /** Contracts, invoices and receipts per booking. */
 export function DocumentsTab({ onChanged, refreshKey }: { onChanged: () => void; refreshKey: number }) {
-  const { can } = usePermissions();
   const [view, setView] = useViewMode("accounting-documents");
   const [rows, setRows] = useState<Row[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [contract, setContract] = useState<Row | null>(null);
   const [pay, setPay] = useState<Row | null>(null);
 
   const load = useCallback(async () => {
@@ -59,13 +57,9 @@ export function DocumentsTab({ onChanged, refreshKey }: { onChanged: () => void;
   const remaining = (r: Row) => (r.paymentStatus === "paid" && !r.amountPaid ? 0 : Math.max(0, r.totalAmount - r.amountPaid));
   const buttons = (r: Row) => (
     <div className="flex flex-wrap gap-1.5 justify-end">
-      {can("bookings.edit") ? (
-        <button type="button" onClick={() => setContract(r)} className={`${btn.base} ${btn.secondary} h-8 px-2.5`}><FileText className="w-3.5 h-3.5" /> Contrat</button>
-      ) : (
-        <a href={`/api/admin/bookings/${r._id}/contract`} target="_blank" rel="noopener noreferrer" className={`${btn.base} ${btn.secondary} h-8 px-2.5`}><FileText className="w-3.5 h-3.5" /> Contrat</a>
-      )}
+      <Link href={`/admin/bookings/${r._id}/contrat`} className={`${btn.base} ${btn.secondary} h-8 px-2.5`}><FileText className="w-3.5 h-3.5" /> Contrat</Link>
       {r.bookingStatus !== "pending" && (
-        <a href={`/api/admin/bookings/${r._id}/invoice`} target="_blank" rel="noopener noreferrer" className={`${btn.base} ${btn.secondary} h-8 px-2.5`}><Receipt className="w-3.5 h-3.5" /> Facture</a>
+        <Link href={`/admin/bookings/${r._id}/facture`} className={`${btn.base} ${btn.secondary} h-8 px-2.5`}><Receipt className="w-3.5 h-3.5" /> Facture</Link>
       )}
       <button type="button" onClick={() => setPay(r)} className={`${btn.base} ${btn.primary} h-8 px-2.5`}><Banknote className="w-3.5 h-3.5" /> Paiements</button>
     </div>
@@ -133,7 +127,6 @@ export function DocumentsTab({ onChanged, refreshKey }: { onChanged: () => void;
           ))}
         </div>
       )}
-      <ContractForm bookingId={contract?._id || null} title={contract?.customerName} onClose={() => setContract(null)} onSaved={load} />
       <Modal open={Boolean(pay)} onClose={() => setPay(null)} title={pay ? `${pay.bookingReference} — ${pay.customerName}` : ""} wide>
         {pay && <BookingPayments bookingId={pay._id} onChanged={() => { load(); onChanged(); }} />}
       </Modal>

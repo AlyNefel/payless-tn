@@ -253,6 +253,8 @@ export interface ContractData {
   back?: ContractInspection;
   /** PNG data URL of the customer's signature (from the departure inspection). */
   customerSignature?: string;
+  /** Special conditions agreed for this rental, printed above the acceptance box. */
+  notes?: string;
   minAge?: number;
   assistancePhone?: string;
 }
@@ -463,6 +465,18 @@ export function generateContractPDF(c: ContractData): Buffer {
     d.text(wrapped, s.m, s.y + 3.8);
     s.y += 3.8 + wrapped.length * 3.4 + 2.6;
   }
+  if (c.notes?.trim()) {
+    d.setFont("helvetica", "bold");
+    d.setFontSize(8);
+    d.setTextColor(...NAVY);
+    d.text("Conditions particulières", s.m, s.y);
+    d.setFont("helvetica", "normal");
+    d.setFontSize(7.6);
+    d.setTextColor(...INK);
+    const wrapped = (d.splitTextToSize(c.notes.trim(), s.cw) as string[]).slice(0, 8);
+    d.text(wrapped, s.m, s.y + 3.8);
+    s.y += 3.8 + wrapped.length * 3.4 + 2.6;
+  }
   s.y += 2;
   d.setDrawColor(...BORDER);
   d.rect(s.m, s.y, s.cw, 22);
@@ -492,6 +506,8 @@ export interface InvoiceData {
   customerId?: string;
   /** Tax identifier of a business customer (matricule fiscal). */
   customerTaxId?: string;
+  /** Free text printed under the totals. */
+  notes?: string;
   lines: { label: string; qty: string; unit: number; total: number }[];
   /** Tax-included amounts in minor units. */
   taxableTTC: number;
@@ -589,6 +605,12 @@ export function generateInvoicePDF(v: InvoiceData): Buffer {
   d.setFontSize(7.4);
   d.setTextColor(...MUTED);
   d.text("Arrêtée la présente facture à la somme indiquée ci-dessus (toutes taxes comprises).", s.m, s.y);
+  if (v.notes?.trim()) {
+    const wrapped = (d.splitTextToSize(v.notes.trim(), s.cw - 56) as string[]).slice(0, 6);
+    d.setTextColor(...INK);
+    d.text(wrapped, s.m, s.y + 5);
+    s.y += wrapped.length * 3.4;
+  }
   s.stamp(s.w - s.m - 48, Math.min(s.y + 4, s.h - 50), 46);
   s.footer(`Facture ${v.number} — ${v.company.legalName} — ${v.company.registration}`);
   return s.buffer();
