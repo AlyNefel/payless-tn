@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { z } from "zod";
 import connectDB from "@/lib/db";
-import { InsurancePolicy, StoredFile, Vehicle } from "@/models";
+import { InsurancePolicy, Vehicle } from "@/models";
+import { deletePrivateFile } from "@/lib/privateFiles";
 import { requirePermission } from "@/lib/permissions";
 import { ensureAllUnits, unitLabel } from "@/lib/fleetUnits";
 import { runFleetAlerts } from "@/lib/notify";
@@ -105,7 +106,7 @@ async function dropAttachment(url: string | undefined | null) {
   const m = /^\/api\/admin\/documents\/([a-f0-9]{24})$/.exec(String(url || ""));
   if (!m) return;
   if (await InsurancePolicy.exists({ attachmentUrl: url })) return;
-  await StoredFile.deleteOne({ _id: m[1] });
+  await deletePrivateFile(m[1]);
 }
 
 /** Create a policy — or renew one ({ renewFrom: <policyId> }): the old policy is closed, history is kept. */

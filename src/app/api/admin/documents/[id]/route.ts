@@ -4,6 +4,7 @@ import { can } from "@/lib/permissions";
 import { getSessionRole } from "@/lib/apiAuth";
 import connectDB from "@/lib/db";
 import { StoredFile } from "@/models";
+import { readPrivateFile } from "@/lib/privateFiles";
 
 export const dynamic = "force-dynamic";
 
@@ -21,10 +22,17 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   if (!(await can(role, section, "view")) && !(await can(role, "accounting", "view"))) {
     return NextResponse.json({ success: false, error: "Accès limité : votre rôle ne permet pas cette action." }, { status: 403 });
   }
-  return new NextResponse(new Uint8Array(doc.data), {
+  let data: Buffer;
+  try {
+    data = await readPrivateFile(doc);
+  } catch (err) {
+    console.error("Private file read failed:", id, err);
+    return NextResponse.json({ success: false, error: "Document momentanément indisponible" }, { status: 502 });
+  }
+  return new NextResponse(new Uint8Array(data), {
     headers: {
       "Content-Type": doc.contentType,
-      "Content-Length": String(doc.size),
+      "Content-Length": String(data.length),
       "Content-Disposition": `inline; filename="${doc.filename.replace(/"/g, "")}"`,
       "Cache-Control": "private, no-store",
       "X-Content-Type-Options": "nosniff",

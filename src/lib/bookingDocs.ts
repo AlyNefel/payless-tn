@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import connectDB from "./db";
-import { Booking, Payment, StoredFile } from "@/models";
+import { Booking, Payment } from "@/models";
+import { readPrivateFileByUrl } from "@/lib/privateFiles";
 import type { IBillingInfo, IBooking, IDriverIdentity } from "@/models/Booking";
 import { nextNumber } from "@/models/Counter";
 import { getCompanyInfo, type ContractData, type InvoiceData } from "./pdfDocs";
@@ -76,11 +77,15 @@ export async function ensureInvoiceNumber(booking: IBooking): Promise<string> {
 }
 
 async function signatureDataUrl(url?: string): Promise<string | undefined> {
-  const m = /^\/api\/admin\/documents\/([a-f0-9]{24})$/.exec(String(url || ""));
-  if (!m) return undefined;
-  const file = await StoredFile.findById(m[1]).select("+data contentType");
-  if (!file || file.contentType !== "image/png") return undefined;
-  return `data:image/png;base64,${Buffer.from(file.data).toString("base64")}`;
+  try {
+    const file = await readPrivateFileByUrl(url);
+    if (!file || file.doc.contentType !== "image/png") return undefined;
+    return `data:image/png;base64,${file.data.toString("base64")}`;
+  } catch (err) {
+    // The contract still prints, with an empty signature box.
+    console.error("Signature unavailable for the contract:", err);
+    return undefined;
+  }
 }
 
 export async function contractData(booking: IBooking): Promise<ContractData> {

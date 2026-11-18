@@ -3,7 +3,8 @@ import mongoose from "mongoose";
 import { z } from "zod";
 import connectDB from "@/lib/db";
 import { requirePermission } from "@/lib/permissions";
-import { Expense, StoredFile, Vehicle } from "@/models";
+import { Expense, Vehicle } from "@/models";
+import { deletePrivateFile } from "@/lib/privateFiles";
 import { EXPENSE_CATEGORIES } from "@/models/Expense";
 import { nextNumber } from "@/models/Counter";
 import { periodFromQuery } from "@/lib/ledger";
@@ -37,7 +38,7 @@ const oid = (v: string) => (mongoose.Types.ObjectId.isValid(v) ? new mongoose.Ty
 
 async function dropReceipt(url?: string | null) {
   const m = /^\/api\/admin\/documents\/([a-f0-9]{24})$/.exec(String(url || ""));
-  if (m && !(await Expense.exists({ receiptUrl: url }))) await StoredFile.deleteOne({ _id: m[1] });
+  if (m && !(await Expense.exists({ receiptUrl: url }))) await deletePrivateFile(m[1]);
 }
 
 export async function GET(request: NextRequest) {

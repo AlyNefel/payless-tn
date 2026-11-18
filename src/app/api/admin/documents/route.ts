@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { can, requirePermission } from "@/lib/permissions";
 import { getSessionRole } from "@/lib/apiAuth";
 import connectDB from "@/lib/db";
-import { StoredFile } from "@/models";
+import { savePrivateFile } from "@/lib/privateFiles";
 
 export const dynamic = "force-dynamic";
 
@@ -38,10 +38,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "Format non supporté : PDF, JPG, PNG ou WebP uniquement." }, { status: 415 });
     }
     await connectDB();
-    const doc = await StoredFile.create({
+    const doc = await savePrivateFile({
       filename: (file.name || "document").replace(/[^\w.\- ()]+/g, "_").slice(0, 150),
       contentType,
-      size: data.length,
       data,
       purpose: ["insurance", "expense", "inspection", "signature"].includes(String(form.get("purpose"))) ? String(form.get("purpose")) : "insurance",
       uploadedBy: guard.session.user?.email || undefined,
