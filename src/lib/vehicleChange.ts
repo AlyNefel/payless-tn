@@ -121,9 +121,9 @@ export async function changeVehicle(bookingId: string, input: ChangeVehicleInput
   const daysChanged = split ? computeRentalDays(eff, returnDay) : totalDays;
   const oldDaily = Number(lines[i].dailyRate || pb.dailyRate || 0);
   const rules = await getRentalRules();
-  // The new car at the rate of the period in force on the change date (whole rental: the pickup
-  // day), with the new model's degressive tariff for the full duration of the rental.
-  const listDaily = rateOn(priceSource(newModel, rules), eff, totalDays) || Number(newModel.pricing?.daily || 0);
+  // Price locked at the start of the rental: the new car at its rate for the period of the PICKUP
+  // day, with the new model's degressive tariff for the full duration of the rental.
+  const listDaily = rateOn(priceSource(newModel, rules), pickupDay, totalDays) || Number(newModel.pricing?.daily || 0);
   const newDaily = input.priceMode === "keep" ? oldDaily : listDaily;
   const amount = (newDaily - oldDaily) * daysChanged;
   const newTotal = Math.max(0, (pb.totalAmount || 0) + amount);

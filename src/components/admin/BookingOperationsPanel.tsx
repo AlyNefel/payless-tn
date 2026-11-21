@@ -410,9 +410,9 @@ export function BookingOperationsPanel(props: Props) {
                 </div>
                 <label className="block space-y-1">
                   <span className="font-semibold text-slate-700 dark:text-slate-300">Prix par jour ajouté (DT)</span>
-                  <input type="number" min={0} step="0.001" className={`${input} disabled:opacity-60`} value={dailyRate} placeholder="Tarif de la période (automatique)" disabled={!canPrice || extraDays <= 0} onChange={(e) => setDailyRate(e.target.value)} />
+                  <input type="number" min={0} step="0.001" className={`${input} disabled:opacity-60`} value={dailyRate} placeholder="Prix du début de location (automatique)" disabled={!canPrice || extraDays <= 0} onChange={(e) => setDailyRate(e.target.value)} />
                   <span className="block text-[11px] text-slate-500">
-                    {canPrice ? "Laissez vide pour appliquer le tarif de la période des jours ajoutés (et le tarif dégressif du modèle)." : "Tarif de la période — votre rôle ne permet pas de modifier le prix."}
+                    {canPrice ? "Laissez vide pour garder le prix du début de la location (période du jour de départ + tarif dégressif du modèle)." : "Prix du début de location — votre rôle ne permet pas de modifier le prix."}
                   </span>
                 </label>
                 <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 font-semibold">

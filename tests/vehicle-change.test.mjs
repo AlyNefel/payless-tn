@@ -30,26 +30,30 @@ const o1 = await book(modelA._id, loc, P, R);
 const o2 = await book(modelA._id, loc, P, R);
 check("model A is now full on the period", o1.s < 300 && o2.s < 300 && (await book(modelA._id, loc, P, R)).s === 409);
 
-// ── Option B: extension at the rate of the period of the added days ──
+// ── Price locked at the start of the rental (extension and car change) ──
 {
-  const SB = "2032-09-01", RB = "2032-09-04";
-  const eb = await book(modelC._id, loc, SB, RB);
-  const eid = await idOf(eb.j.bookingReference);
-  // Model C: September 4 → 30 at +50 % (the added days fall in it).
   const tnd = Math.round((dC * 1.5) / 100);
-  await A.req("/api/admin/vehicles/pricing", "PUT", { vehicleId: modelC._id, seasonalPrices: [{ name: "Fin septembre", startDate: "09-04", endDate: "09-30", dailyRate: tnd, minDays: 0 }] });
+  // Model C: high season from 4 September. A rental starting 1 September (low season) keeps the
+  // low-season price when it is extended into the high season.
+  await A.req("/api/admin/vehicles/pricing", "PUT", { vehicleId: modelC._id, seasonalPrices: [{ name: "Haute", startDate: "09-04", endDate: "09-30", dailyRate: tnd, minDays: 0 }] });
+  const eb = await book(modelC._id, loc, "2032-09-01", "2032-09-04");
+  const eid = await idOf(eb.j.bookingReference);
   let x = await act(eid, { action: "change_return", newReturnDate: "2032-09-06", dryRun: true });
-  check("extension preview: period rate of the added days, nothing saved", x.s === 200 && x.j.quote.dailyRate === tnd * 100 && x.j.quote.amount >= tnd * 100 * 2 && (await get(eid)).returnDate.slice(0, 10) === RB, JSON.stringify(x.j.quote));
+  check("extension preview: start-of-rental price, nothing saved", x.s === 200 && x.j.quote.dailyRate === dC && (await get(eid)).returnDate.slice(0, 10) === "2032-09-04", JSON.stringify(x.j.quote));
   x = await act(eid, { action: "change_return", newReturnDate: "2032-09-06" });
-  check("extension billed at the period rate (not the base price)", x.s === 200 && x.j.amount >= tnd * 100 * 2, `amount=${x.j.amount}`);
-  // Car change into the same period: the new car at its rate on the change date.
+  check("extension into the next period keeps the start price", x.s === 200 && x.j.amount >= dC * 2 && x.j.amount < tnd * 100 * 2, `amount=${x.j.amount}`);
+  // A rental that STARTS in the high season is extended at the high-season price.
+  const hb = await book(modelC._id, loc, "2032-09-10", "2032-09-13");
+  const hid = await idOf(hb.j.bookingReference);
+  x = await act(hid, { action: "change_return", newReturnDate: "2032-09-14", dryRun: true });
+  check("rental started in high season: extension at the high-season price", x.s === 200 && x.j.quote.dailyRate === tnd * 100, JSON.stringify(x.j.quote));
+  // Car change: the new car at its price for the period of the pickup day.
   const cb = await book(modelC._id, loc, "2032-09-01", "2032-09-07");
   const cid = await idOf(cb.j.bookingReference);
   x = await act(cid, { action: "change_vehicle", effectiveDate: "2032-09-05", newVehicleId: modelC._id, dryRun: true });
-  check("car change: new car at the rate of the period on the change date", x.s === 200 && x.j.quote.newDailyRate === tnd * 100 && x.j.quote.daysChanged === 2, JSON.stringify({ rate: x.j.quote?.newDailyRate, days: x.j.quote?.daysChanged }));
+  check("car change: new car at its start-of-rental price", x.s === 200 && x.j.quote.newDailyRate === dC && x.j.quote.daysChanged === 2, JSON.stringify({ rate: x.j.quote?.newDailyRate, days: x.j.quote?.daysChanged }));
   await A.req("/api/admin/vehicles/pricing", "PUT", { vehicleId: modelC._id, seasonalPrices: [] });
-  await act(eid, { status: "cancelled" });
-  await act(cid, { status: "cancelled" });
+  for (const i of [eid, hid, cid]) await act(i, { status: "cancelled" });
 }
 
 // ── Edge cases ──

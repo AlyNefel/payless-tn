@@ -833,8 +833,9 @@ async function handleAction(id: string, body: unknown, by: string) {
         { status: 409 }
       );
     }
-    // Extra days at the rate of the period they fall in, for the car the customer has now
-    // (after a car change: the new model), with the model's degressive tariff for the new duration.
+    // Price locked at the start of the rental: extra days at the rate of the period of the PICKUP
+    // day (same rule as a booking spanning two periods), for the car the customer has now (after a
+    // car change: the new model), with the model's degressive tariff for the new total duration.
     // Each car of a multi-car booking at its own model's rate. A custom price (pricing.edit) wins.
     const ids = booking.vehicles && booking.vehicles.length > 0 ? booking.vehicles.map((v) => String(v.vehicleId)) : [String(vehicle?._id || booking.vehicleId)];
     let rental: number;
@@ -844,10 +845,10 @@ async function handleAction(id: string, body: unknown, by: string) {
     } else {
       const models = await Vehicle.find({ _id: { $in: ids } }).lean();
       const rules = await getRentalRules();
-      const firstExtraDay = holdDays(previousReturn, previousReturn)[0];
+      const pickupDay = holdDays(booking.pickupDate, booking.pickupDate)[0];
       const rate = (vid: string) => {
         const m = models.find((x) => String(x._id) === vid);
-        return m ? rateOn(priceSource(m, rules), firstExtraDay, newDays) : Number(currentRate ?? vehicle?.pricing?.daily ?? 0);
+        return m ? rateOn(priceSource(m, rules), pickupDay, newDays) : Number(currentRate ?? vehicle?.pricing?.daily ?? 0);
       };
       rental = ids.reduce((acc, vid) => acc + rate(vid) * delta, 0);
       dailyUsed = Math.round(rental / delta / ids.length);
