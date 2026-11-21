@@ -377,6 +377,12 @@ function BookingContent() {
   const stepOneMinDays = data.pickupDate ? minDaysOn(data.pickupDate) : 1;
   const stepOnePeriod = data.pickupDate ? periodFor(data.pickupDate) : null;
 
+  /** Daily rate really billed for the chosen period (season + degressive tariff). */
+  const billedDaily = (vehicle: { minRentalDays?: number; pricing?: any }) =>
+    data.pickupDate && data.returnDate
+      ? calculateSeasonalRentalTotal(live(vehicle), data.pickupDate, data.returnDate).averageDailyRate
+      : getVehicleEffectiveDailyRate(live(vehicle), data.pickupDate);
+
   const vehicleSubtotal = (vehicle: Vehicle) => {
     const { subtotal: seasonal } = calculateSeasonalRentalTotal(live(vehicle), data.pickupDate, data.returnDate);
     return seasonal || (vehicle.pricing.daily || 0) * rentalDays;
@@ -1280,7 +1286,7 @@ function BookingContent() {
                                 {c.vehicle.brand} {c.vehicle.model}
                               </div>
                               <div className="text-[11px] text-blue-600 dark:text-blue-400 font-mono font-bold mt-0.5">
-                                {fmt(getVehicleEffectiveDailyRate(live(c.vehicle), data.pickupDate))} DT / jour
+                                {fmt(billedDaily(c.vehicle))} DT / jour
                               </div>
                               {isViolated && (
                                 <div className="text-[10px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
@@ -1452,7 +1458,7 @@ function BookingContent() {
                             <div className="w-full sm:w-auto flex items-center justify-between sm:flex-col sm:items-end gap-2 border-t sm:border-t-0 border-border/50 pt-2 sm:pt-0 shrink-0">
                               <div className="text-right">
                                 <div className="text-lg sm:text-xl font-bold text-blue-700 dark:text-blue-400">
-                                  {fmt(getVehicleEffectiveDailyRate(live(v), data.pickupDate))} {currencySymbol}
+                                  {fmt(billedDaily(v))} {currencySymbol}
                                 </div>
                                 <div className="text-[11px] text-muted-foreground">
                                   {locale === "ar" ? "/ يوم شامل" : locale === "en" ? "/ day incl. tax" : "/ jour TTC"}
@@ -2005,7 +2011,7 @@ function BookingContent() {
                             <div className="text-xs text-muted-foreground">Tarif journalier</div>
                             <div className="flex sm:block items-baseline gap-1 text-right">
                               <span className="text-lg font-bold text-blue-700 dark:text-blue-400">
-                                {fmt(getVehicleEffectiveDailyRate(live(cItem.vehicle), data.pickupDate))} {currencySymbol}
+                                {fmt(billedDaily(cItem.vehicle))} {currencySymbol}
                               </span>
                               <span className="text-[11px] text-muted-foreground ml-1 sm:ml-0 sm:block">/ jour TTC</span>
                             </div>

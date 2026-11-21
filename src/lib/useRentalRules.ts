@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { matchGlobalSeason, type GlobalSeason } from "./seasonalPricing";
+import { matchGlobalSeason, type DurationDiscount, type GlobalSeason } from "./seasonalPricing";
 
 export interface PublicRentalRules {
   minRentalDaysGlobal: number;
   seasons: GlobalSeason[];
+  durationDiscounts: DurationDiscount[];
 }
 
 /** "YYYY-MM-DD" + n days, without time-zone drift. */
@@ -21,14 +22,14 @@ export function addDays(day: string, n: number): string {
  * so the rules apply from the very first step, before a car is chosen.
  */
 export function useRentalRules() {
-  const [rules, setRules] = useState<PublicRentalRules>({ minRentalDaysGlobal: 1, seasons: [] });
+  const [rules, setRules] = useState<PublicRentalRules>({ minRentalDaysGlobal: 1, seasons: [], durationDiscounts: [] });
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const d = await fetch("/api/rental-rules", { cache: "no-store" }).then((r) => r.json());
       if (d?.success) {
-        setRules({ minRentalDaysGlobal: Number(d.minRentalDaysGlobal) || 1, seasons: Array.isArray(d.seasons) ? d.seasons : [] });
+        setRules({ minRentalDaysGlobal: Number(d.minRentalDaysGlobal) || 1, seasons: Array.isArray(d.seasons) ? d.seasons : [], durationDiscounts: Array.isArray(d.durationDiscounts) ? d.durationDiscounts : [] });
         setLoaded(true);
       }
     } catch {

@@ -157,6 +157,8 @@ export async function runFleetAlerts(opts: { force?: boolean; minIntervalMs?: nu
   if (!opts.force && Date.now() - lastRun < interval) return 0;
   if (running) return running;
   lastRun = Date.now();
+  // Customer reminders piggy-back on the same heartbeat (at most hourly) when no cron calls them.
+  import("./reminders").then((m) => m.runRemindersThrottled()).catch(() => {});
   running = doRunFleetAlerts().finally(() => {
     running = null;
   });
@@ -345,7 +347,7 @@ async function doRunFleetAlerts(): Promise<number> {
     for (const b of bookings) {
       const veh = b.vehicleId as unknown as { brand?: string; model?: string } | null;
       const name = veh ? `${veh.brand} ${veh.model}` : "Véhicule";
-      const plates = (b.assignedUnits || []).map((a) => a.licensePlate).filter(Boolean).join(", ");
+      const plates = (b.assignedUnits || []).filter((a) => !a.to).map((a) => a.licensePlate).filter(Boolean).join(", ");
       const carLabel = plates ? `${name} (${plates})` : name;
       const link = `/admin/bookings/${b._id}`;
       const ref = b.bookingReference;

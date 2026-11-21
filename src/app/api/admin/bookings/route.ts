@@ -22,15 +22,15 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status");
     const fromDate = searchParams.get("from");
     const toDate = searchParams.get("to");
+    /** pickup (default) | return | created | overlap (rentals running at some point of the period). */
+    const dateField = searchParams.get("dateField") || "pickup";
+    const sortParam = searchParams.get("sort") || "created_desc";
     const page = parseInt(searchParams.get("page") || "1");
     const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "100", 10) || 100));
 
     const query: Record<string, unknown> = {};
 
     const and: Record<string, unknown>[] = [];
-    if (status && status !== "All") {
-      and.push({ bookingStatus: status.toLowerCase() });
-    }
 
     if (search) {
       const q = sanitizeQuery(search);
@@ -60,18 +60,43 @@ export async function GET(request: NextRequest) {
           { bookingReference: { $regex: q, $options: "i" } },
           { customerId: { $in: customerIds } },
           { vehicleId: { $in: vehicleIds } },
+          { "vehicles.vehicleId": { $in: vehicleIds } },
+          // Plates live on the physical cars assigned to the booking.
+          { "assignedUnits.licensePlate": { $regex: q, $options: "i" } },
+          { "contract.number": { $regex: q, $options: "i" } },
+          { invoiceNumber: { $regex: q, $options: "i" } },
         ],
       });
     }
+    // Period filter, by day (inclusive), on the chosen date.
+    const day = /^\d{4}-\d{2}-\d{2}/;
+    const from = fromDate && day.test(fromDate) ? new Date(`${fromDate.slice(0, 10)}T00:00:00.000Z`) : null;
+    const to = toDate && day.test(toDate) ? new Date(`${toDate.slice(0, 10)}T23:59:59.999Z`) : null;
+    if (from || to) {
+      if (dateField === "overlap") {
+        // Rentals that are running at some point of the period (started before its end, end after its start).
+        if (to) and.push({ pickupDate: { $lte: to } });
+        if (from) and.push({ returnDate: { $gte: from } });
+      } else {
+        const field = dateField === "return" ? "returnDate" : dateField === "created" ? "createdAt" : "pickupDate";
+        and.push({ [field]: { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) } });
+      }
+    }
+
+    // Counts per status for the tabs: same search and period, every status.
+    const baseQuery: Record<string, unknown> = and.length ? { $and: [...and] } : {};
+    if (status && status !== "All") {
+      const st = status.toLowerCase();
+      and.push(
+        st === "cancelled"
+          ? { bookingStatus: { $in: ["cancelled", "rejected"] } }
+          : st === "confirmed"
+            ? { bookingStatus: { $in: ["confirmed", "awaiting_payment", "paid"] } }
+            : { bookingStatus: st }
+      );
+    }
     // Combine filters with $and so status and search no longer overwrite each other.
     if (and.length) query.$and = and;
-
-    if (fromDate || toDate) {
-      const dateQuery: Record<string, Date> = {};
-      if (fromDate) dateQuery.$gte = new Date(fromDate);
-      if (toDate) dateQuery.$lte = new Date(toDate);
-      query.pickupDate = dateQuery;
-    }
 
     const [rawBookings, total] = await Promise.all([
       // Only the fields the list needs (vehicles carry their whole fleet of plates otherwise).
@@ -82,12 +107,32 @@ export async function GET(request: NextRequest) {
         .populate("customerId", "firstName lastName email phone")
         .populate("pickupLocationId", "name city")
         .populate("returnLocationId", "name city")
-        .sort({ createdAt: -1 })
+        .sort(
+          sortParam === "pickup_asc"
+            ? { pickupDate: 1, _id: 1 }
+            : sortParam === "pickup_desc"
+              ? { pickupDate: -1, _id: -1 }
+              : sortParam === "return_asc"
+                ? { returnDate: 1, _id: 1 }
+                : { createdAt: -1, _id: -1 }
+        )
         .skip((page - 1) * limit)
         .limit(limit)
         .lean(),
       Booking.countDocuments(query),
     ]);
+    const statusRows = await Booking.aggregate<{ _id: string; n: number; amount: number }>([
+      { $match: baseQuery },
+      { $group: { _id: "$bookingStatus", n: { $sum: 1 }, amount: { $sum: "$pricingBreakdown.totalAmount" } } },
+    ]);
+    const counts: Record<string, number> = { All: 0, pending: 0, confirmed: 0, active: 0, completed: 0, cancelled: 0 };
+    let periodAmount = 0;
+    for (const r of statusRows) {
+      counts.All += r.n;
+      const k = r._id === "rejected" ? "cancelled" : r._id === "awaiting_payment" || r._id === "paid" ? "confirmed" : r._id;
+      counts[k] = (counts[k] || 0) + r.n;
+      if (!["cancelled", "rejected"].includes(r._id)) periodAmount += r.amount || 0;
+    }
 
     // Format bookings with friendly normalized properties
     const bookings = rawBookings.map((b: any) => {
@@ -117,7 +162,7 @@ export async function GET(request: NextRequest) {
         vehicles: b.vehicles || [],
         vehicleId: veh?._id?.toString() || (typeof b.vehicleId === "string" ? b.vehicleId : ""),
         vehicleName: multiVehName || (veh ? `${veh.brand} ${veh.model}` : "Véhicule"),
-        licensePlate: (b.assignedUnits || []).map((u: any) => u.licensePlate || "immat. à saisir").join(", "),
+        licensePlate: (b.assignedUnits || []).filter((u: any) => !u.to).map((u: any) => u.licensePlate || "immat. à saisir").join(", "),
         vehicleImage: veh?.images?.find((i: any) => i.isPrimary)?.url || veh?.images?.[0]?.url || "",
         pickupDate: b.pickupDate ? new Date(b.pickupDate).toISOString().split("T")[0] : "",
         returnDate: b.returnDate ? new Date(b.returnDate).toISOString().split("T")[0] : "",
@@ -139,7 +184,8 @@ export async function GET(request: NextRequest) {
         pickupMileage: b.pickupMileage ?? null,
         returnMileage: b.returnMileage ?? null,
         internalNotes: b.internalNotes || "",
-        hasCar: (b.assignedUnits || []).some((u: any) => u.unitId),
+        hasCar: (b.assignedUnits || []).some((u: any) => u.unitId && !u.to),
+        carChanged: (b.vehicleChanges || []).length > 0,
         amountPaid: b.amountPaid || 0,
         depositHeld: b.depositHeld || 0,
         depositDue: b.pricingBreakdown?.depositAmount || 0,
@@ -152,7 +198,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ success: true, bookings, total, page, limit });
+    return NextResponse.json({ success: true, bookings, total, page, limit, counts, periodAmount });
   } catch (error) {
     console.error("GET /api/admin/bookings error:", error);
     return NextResponse.json({ error: "Failed to fetch bookings" }, { status: 500 });

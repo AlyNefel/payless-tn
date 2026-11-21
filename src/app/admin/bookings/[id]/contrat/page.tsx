@@ -21,7 +21,7 @@ interface BookingLite {
   pickupMileage?: number;
   customerId?: { firstName?: string; lastName?: string } | null;
   vehicleId?: { brand?: string; model?: string } | null;
-  assignedUnits?: { licensePlate?: string }[];
+  assignedUnits?: { licensePlate?: string; to?: string }[];
   pickupInspection?: InspectionValue | null;
   returnInspection?: InspectionValue | null;
 }
@@ -111,7 +111,7 @@ export default function ContractPage({ params }: { params: Promise<{ id: string 
 
   const customer = `${booking?.customerId?.firstName || ""} ${booking?.customerId?.lastName || ""}`.trim();
   const car = `${booking?.vehicleId?.brand || ""} ${booking?.vehicleId?.model || ""}`.trim();
-  const plates = (booking?.assignedUnits || []).map((u) => u.licensePlate).filter(Boolean).join(", ");
+  const plates = (booking?.assignedUnits || []).filter((u) => !u.to).map((u) => u.licensePlate).filter(Boolean).join(", ");
   const day = (d?: string) => (d ? new Date(d).toLocaleDateString("fr-FR", { timeZone: "UTC" }) : "—");
 
   return (

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import {
   LayoutDashboard,
@@ -34,12 +34,16 @@ import {
   Globe,
   Wrench,
   ListOrdered,
+  Droplets,
+  ClipboardCheck,
+  ShieldAlert,
 } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { AdminLangProvider, useAdminLang } from "@/contexts/AdminLangContext";
-import { sectionForPath, type AccessLevel } from "@/lib/permissionsShared";
+import { RESOURCES, sectionForPath, type AccessLevel } from "@/lib/permissionsShared";
 import { loadMe } from "./ui/usePermissions";
+import { AdminFooter, BrandBlock, SidebarScene } from "./AdminBrand";
 import { NotificationToasts, severityColor, severityIcon, timeAgo, useLiveNotifications } from "./useLiveNotifications";
 
 interface NavItem {
@@ -82,8 +86,6 @@ const NAV_GROUPS: NavGroup[] = [
     icon: Car,
     items: [
       { title: "Car Model Manager", href: "/admin/fleet", icon: Car },
-      { title: "Tarifs par Période", href: "/admin/pricing", icon: Tag },
-      { title: "Garage & Vidanges", href: "/admin/garage", icon: Wrench },
       { title: "Location Manager", href: "/admin/locations", icon: MapPin },
     ],
   },
@@ -95,8 +97,18 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Tarifs par Période", href: "/admin/pricing", icon: Tag },
       { title: "Options & Équipements", href: "/admin/options", icon: SlidersHorizontal },
       { title: "Frais & Taxes (démo)", href: "/admin/fees", icon: SlidersHorizontal },
-      { title: "Payment & Finance Manager", href: "/admin/finance", icon: Receipt },
       { title: "Promos & Coupons", href: "/admin/promotions", icon: Tag },
+    ],
+  },
+  {
+    id: "garage",
+    groupTitle: { fr: "Garage", en: "Garage" },
+    icon: Wrench,
+    items: [
+      { title: "Vidange", href: "/admin/garage?tab=vidange", icon: Droplets },
+      { title: "Maintenance", href: "/admin/garage?tab=maintenance", icon: Wrench },
+      { title: "Visite technique", href: "/admin/garage?tab=inspection", icon: ClipboardCheck },
+      { title: "Assurance", href: "/admin/garage?tab=assurance", icon: ShieldAlert },
     ],
   },
   {
@@ -149,13 +161,47 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Options & Équipements", href: "/admin/options", icon: SlidersHorizontal },
       { title: "Location Manager", href: "/admin/locations", icon: MapPin },
       { title: "Frais & Taxes Manager", href: "/admin/fees", icon: SlidersHorizontal },
-      { title: "Payment & Finance Manager", href: "/admin/finance", icon: Receipt },
       { title: "Reservation Manager", href: "/admin/bookings", icon: CalendarCheck2 },
       { title: "Étapes de Réservation", href: "/admin/steps", icon: ListOrdered },
     ],
   },
 ];
 
+
+/** The read-only notice only makes sense on sections that have something to edit. */
+const READ_ONLY_RELEVANT = (section: string | null) =>
+  Boolean(section) && (RESOURCES.find((r) => r.key === section)?.actions || []).some((a) => a !== "view");
+
+/** Reports the current query string (kept in its own Suspense boundary so pages never wait for it). */
+function QueryWatcher({ onChange }: { onChange: (q: string) => void }) {
+  const params = useSearchParams();
+  const q = params.toString();
+  useEffect(() => onChange(q), [q, onChange]);
+  return null;
+}
+
+/**
+ * Menu entry state, query-aware: "/admin/garage?tab=assurance" is active only on that section;
+ * an entry without a query is active when no sibling entry of the same page matches the query.
+ */
+function navMatch(href: string, pathname: string, query: string, siblings: string[]): boolean {
+  const [path, qs] = href.split("?");
+  if (path === "/admin") return pathname === "/admin";
+  if (!(pathname === path || pathname.startsWith(`${path}/`))) return false;
+  const current = new URLSearchParams(query);
+  if (qs) {
+    const want = new URLSearchParams(qs);
+    for (const [k, v] of want) {
+      // First section of a page = its default (no ?tab=): Vidange for the garage.
+      const first = siblings.filter((h) => h.split("?")[0] === path && h.includes("?"))[0];
+      const isDefault = first === href && !current.get(k);
+      if (current.get(k) !== v && !isDefault) return false;
+    }
+    return true;
+  }
+  // No query on this entry: active unless a sibling entry with a query matches better.
+  return !siblings.some((h) => h !== href && h.startsWith(`${path}?`) && navMatch(h, pathname, query, []));
+}
 
 function AdminLayoutContent({
   children,
@@ -164,6 +210,7 @@ function AdminLayoutContent({
 }) {
   const { lang, setLang, t } = useAdminLang();
   const pathname = usePathname();
+  const [query, setQuery] = useState("");
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -193,7 +240,7 @@ function AdminLayoutContent({
   const currentAccess: AccessLevel = access && currentSection ? access[currentSection] || "none" : "edit";
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [showQuickBookingModal, setShowQuickBookingModal] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">("light");
 
   // Track expanded groups in sidebar (accordion / collapsible submenus)
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
@@ -368,7 +415,7 @@ function AdminLayoutContent({
         document.documentElement.classList.remove("dark");
       }
     } else {
-      document.documentElement.classList.add("dark");
+      document.documentElement.classList.remove("dark");
     }
   }, []);
 
@@ -405,39 +452,25 @@ function AdminLayoutContent({
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-black text-slate-900 dark:text-slate-100 flex flex-col lg:flex-row antialiased transition-colors duration-300 selection:bg-blue-600 selection:text-white">
+    <div className="min-h-screen bg-[#eef3fb] dark:bg-black text-slate-900 dark:text-slate-100 flex flex-col lg:flex-row antialiased transition-colors duration-300 selection:bg-blue-600 selection:text-white">
+      <Suspense fallback={null}>
+        <QueryWatcher onChange={setQuery} />
+      </Suspense>
       {/* DESKTOP SIDEBAR */}
-      <aside className="hidden lg:flex flex-col w-72 shrink-0 bg-white/95 dark:bg-[#0a0a0a]/95 border-r border-slate-200 dark:border-neutral-800 backdrop-blur-xl sticky top-0 h-screen z-30 transition-colors duration-300">
+      <aside className="hidden lg:flex flex-col w-72 shrink-0 bg-gradient-to-b from-[#0a2463] via-[#0d3488] to-[#0a2463] text-white sticky top-0 h-screen z-30 shadow-[4px_0_24px_rgba(10,36,99,0.25)]">
         {/* Brand Header */}
-        <div className="h-20 px-6 flex items-center justify-between border-b border-slate-200 dark:border-neutral-800">
-          <Link href="/admin" className="flex items-center gap-3 group">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-blue-400 flex items-center justify-center text-white shadow-lg shadow-blue-500/25 group-hover:scale-105 transition-transform">
-              <Car className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-extrabold text-base tracking-wider text-slate-900 dark:text-white">
-                  PAYLESS
-                </span>
-                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-600/30 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30">
-                  PRO
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                Car Rental Tunisia
-              </p>
-            </div>
-          </Link>
+        <div className="px-6 pt-6 pb-4">
+          <BrandBlock />
         </div>
 
         {/* Navigation Groups with Collapsible Submenus */}
-        <div className="flex-1 overflow-y-auto px-3.5 py-4 space-y-2">
+        <div className="flex-1 overflow-y-auto px-3.5 py-2 space-y-1.5 admin-sidebar-scroll">
           {visibleGroups.map((group) => {
             const GroupIcon = group.icon;
             const title = lang === "en" ? group.groupTitle.en : group.groupTitle.fr;
             const isCollapsed = Boolean(collapsedGroups[group.id]);
             const hasActiveChild = group.items.some(
-              (item) => pathname === item.href || (item.href !== "/admin" && pathname.startsWith(item.href))
+              (item) => navMatch(item.href, pathname, query, [])
             );
 
             return (
@@ -445,7 +478,7 @@ function AdminLayoutContent({
                 key={group.id}
                 className={`rounded-2xl transition-all duration-200 ${
                   group.id === "all_managers"
-                    ? "bg-gradient-to-br from-blue-50/50 to-indigo-50/30 dark:from-blue-950/20 dark:to-indigo-950/10 border border-blue-200/60 dark:border-blue-900/40 p-1"
+                    ? "bg-white/5 border border-white/10 p-1"
                     : ""
                 }`}
               >
@@ -455,12 +488,12 @@ function AdminLayoutContent({
                   onClick={() => toggleGroup(group.id)}
                   className={`w-full px-3 py-2 flex items-center justify-between rounded-xl text-left transition-colors cursor-pointer group ${
                     hasActiveChild && isCollapsed
-                      ? "bg-blue-50/80 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300"
-                      : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/70 dark:hover:bg-slate-800/40"
+                      ? "bg-white/10 text-white"
+                      : "text-blue-100/75 hover:text-white hover:bg-white/10"
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <GroupIcon className={`w-3.5 h-3.5 ${hasActiveChild ? "text-blue-600 dark:text-blue-400" : "text-slate-400"}`} />
+                    <GroupIcon className={`w-3.5 h-3.5 ${hasActiveChild ? "text-white" : "text-blue-200/70"}`} />
                     <span className="text-[11px] font-black uppercase tracking-wider truncate">
                       {title}
                     </span>
@@ -468,13 +501,13 @@ function AdminLayoutContent({
 
                   <div className="flex items-center gap-1.5 shrink-0">
                     {group.id === "all_managers" && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">
+                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-white/15 text-white">
                         {group.items.length}
                       </span>
                     )}
                     <ChevronDown
                       className={`w-3.5 h-3.5 transition-transform duration-200 ${
-                        isCollapsed ? "-rotate-90 text-slate-400" : "rotate-0 text-slate-600 dark:text-slate-300"
+                        isCollapsed ? "-rotate-90 text-blue-200/60" : "rotate-0 text-blue-100"
                       }`}
                     />
                   </div>
@@ -485,26 +518,24 @@ function AdminLayoutContent({
                   <div className="space-y-0.5 pt-1 pl-1.5 pr-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
                     {group.items.map((item) => {
                       const Icon = item.icon;
-                      const isActive =
-                        pathname === item.href ||
-                        (item.href !== "/admin" && pathname.startsWith(item.href));
+                      const isActive = navMatch(item.href, pathname, query, group.items.map((i) => i.href));
 
                       return (
                         <Link
                           key={item.href + item.title}
                           href={item.href}
-                          className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all group ${
+                          className={`flex items-center justify-between px-3 py-2.5 rounded-xl text-[13px] font-semibold transition-all group ${
                             isActive
-                              ? "bg-blue-600 text-white shadow-md shadow-blue-500/25"
-                              : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/60"
+                              ? "bg-[#1d6ff2] text-white shadow-lg shadow-black/25"
+                              : "text-blue-50/90 hover:text-white hover:bg-white/10"
                           }`}
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
                             <Icon
-                              className={`w-3.5 h-3.5 shrink-0 transition-transform group-hover:scale-110 ${
+                              className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-110 ${
                                 isActive
                                   ? "text-white"
-                                  : "text-slate-400 dark:text-slate-500 group-hover:text-slate-700 dark:group-hover:text-slate-300"
+                                  : "text-blue-200/80 group-hover:text-white"
                               }`}
                             />
                             <span className="truncate">{getNavTitle(item.href, item.title)}</span>
@@ -519,25 +550,27 @@ function AdminLayoutContent({
           })}
         </div>
 
+        <SidebarScene />
+
         {/* User Card & Logout */}
-        <div className="p-4 border-t border-slate-200 dark:border-slate-800/80">
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
+        <div className="px-4 py-3 bg-[#0a2463] border-t border-white/10">
+          <div className="p-2.5 rounded-xl bg-white/10 border border-white/10 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-blue-600/20">
                 {(me?.name || "A").charAt(0).toUpperCase()}
               </div>
               <div className="overflow-hidden">
-                <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                <p className="text-xs font-bold text-white truncate">
                   {me?.name || "…"}
                 </p>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                <p className="text-[10px] text-blue-100/70 truncate">
                   {me?.roleName || me?.role || ""}{me?.email ? ` · ${me.email}` : ""}
                 </p>
               </div>
             </div>
             <button
               onClick={handleSignOut}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
+              className="p-1.5 rounded-lg text-blue-100/80 hover:text-white hover:bg-red-500/80 transition-colors"
               title="Se déconnecter"
             >
               <LogOut className="w-4 h-4" />
@@ -553,19 +586,15 @@ function AdminLayoutContent({
             onClick={() => setMobileMenuOpen(false)}
             className="fixed inset-0 bg-black/60 backdrop-blur-sm transition-opacity"
           />
-          <div className="relative w-72 max-w-[80vw] bg-white dark:bg-[#0b0f17] border-r border-slate-200 dark:border-slate-800 flex flex-col h-full z-10 p-4">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold">
-                  <Car className="w-4 h-4" />
-                </div>
-                <span className="font-extrabold text-sm text-slate-900 dark:text-white">
-                  PAYLESS PRO
-                </span>
+          <div className="relative w-72 max-w-[82vw] bg-gradient-to-b from-[#0a2463] via-[#0d3488] to-[#0a2463] text-white flex flex-col h-full z-10 p-4">
+            <div className="flex items-start justify-between pb-3 border-b border-white/10">
+              <div className="flex-1">
+                <BrandBlock compact />
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                aria-label="Fermer le menu"
+                className="p-1.5 rounded-lg text-blue-100 hover:bg-white/10"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -577,22 +606,22 @@ function AdminLayoutContent({
                 const title = lang === "en" ? group.groupTitle.en : group.groupTitle.fr;
                 const isCollapsed = Boolean(collapsedGroups[group.id]);
                 const hasActiveChild = group.items.some(
-                  (item) => pathname === item.href || (item.href !== "/admin" && pathname.startsWith(item.href))
+                  (item) => navMatch(item.href, pathname, query, [])
                 );
 
                 return (
-                  <div key={group.id} className="rounded-xl border border-slate-100 dark:border-slate-800/60 p-1">
+                  <div key={group.id} className="rounded-xl border border-white/10 p-1">
                     <button
                       type="button"
                       onClick={() => toggleGroup(group.id)}
                       className={`w-full px-2.5 py-1.5 flex items-center justify-between rounded-lg text-left transition-colors ${
                         hasActiveChild && isCollapsed
-                          ? "bg-blue-50 text-blue-600 dark:bg-blue-950/40"
-                          : "text-slate-600 dark:text-slate-400"
+                          ? "bg-white/10 text-white"
+                          : "text-blue-100/80"
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <GroupIcon className="w-3.5 h-3.5 text-blue-500" />
+                        <GroupIcon className="w-3.5 h-3.5 text-blue-200" />
                         <span className="text-[10px] font-black uppercase tracking-wider">{title}</span>
                       </div>
                       <ChevronDown
@@ -606,7 +635,7 @@ function AdminLayoutContent({
                       <div className="space-y-0.5 pt-1 pl-1">
                         {group.items.map((item) => {
                           const Icon = item.icon;
-                          const isActive = pathname === item.href;
+                          const isActive = navMatch(item.href, pathname, query, group.items.map((i) => i.href));
                           return (
                             <Link
                               key={item.href + item.title}
@@ -614,8 +643,8 @@ function AdminLayoutContent({
                               onClick={() => setMobileMenuOpen(false)}
                               className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-semibold ${
                                 isActive
-                                  ? "bg-blue-600 text-white shadow-sm"
-                                  : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                  ? "bg-[#1d6ff2] text-white shadow-sm"
+                                  : "text-blue-50/90 hover:bg-white/10"
                               }`}
                             >
                               <div className="flex items-center gap-2">
@@ -632,10 +661,10 @@ function AdminLayoutContent({
               })}
             </div>
 
-            <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
+            <div className="pt-3 border-t border-white/10">
               <button
                 onClick={handleSignOut}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-white hover:bg-red-500/80"
               >
                 <LogOut className="w-4 h-4" />
                 <span>Déconnexion</span>
@@ -648,7 +677,7 @@ function AdminLayoutContent({
       {/* MAIN VIEWPORT */}
       <div className="flex-1 flex flex-col min-w-0 w-full overflow-x-hidden">
         {/* TOP NAVIGATION BAR */}
-        <header className="h-16 sm:h-20 bg-white/80 dark:bg-[#0a0a0a]/90 border-b border-slate-200 dark:border-neutral-800 backdrop-blur-xl px-3 sm:px-6 md:px-8 flex items-center justify-between sticky top-0 z-20 transition-colors duration-300 w-full max-w-full">
+        <header className="h-16 sm:h-20 bg-white dark:bg-[#0a0a0a]/90 border-b border-slate-200/70 dark:border-neutral-800 shadow-[0_2px_16px_rgba(10,36,99,0.06)] px-3 sm:px-6 md:px-8 flex items-center justify-between sticky top-0 z-20 transition-colors duration-300 w-full max-w-full">
           {/* Mobile hamburger & search */}
           <div className="flex items-center gap-2 sm:gap-4 shrink-0">
             <button
@@ -671,7 +700,7 @@ function AdminLayoutContent({
             {/* Desktop/Tablet Quick Search trigger */}
             <div
               onClick={() => router.push("/admin/bookings")}
-              className="hidden sm:flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-900/90 hover:bg-slate-200/70 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs cursor-pointer transition-all hover:border-slate-300 dark:hover:border-slate-700 sm:w-52 md:w-64 xl:w-80 shadow-sm"
+              className="hidden sm:flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-900/90 hover:bg-slate-200/70 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 text-xs cursor-pointer transition-all hover:border-slate-300 dark:hover:border-slate-700 sm:w-44 md:w-56 2xl:w-80 shadow-sm"
             >
               <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
               <span className="flex-1 truncate">Recherche matricule, client, réf...</span>
@@ -828,6 +857,23 @@ function AdminLayoutContent({
               <span className="hidden xl:inline">Voir le site</span>
               <span className="sr-only xl:hidden">Voir le site</span>
             </Link>
+
+            {/* Signed-in user + country (decorative, as on the mock-ups) */}
+            <div className="hidden md:flex items-center gap-2 pl-2 ml-1 border-l border-slate-200 dark:border-slate-800">
+              <span className="w-9 h-9 rounded-full bg-gradient-to-br from-[#1d6ff2] to-[#0a2463] text-white flex items-center justify-center text-sm font-bold shadow" aria-hidden>
+                {(me?.name || "A").charAt(0).toUpperCase()}
+              </span>
+              <span className="hidden 2xl:block text-sm font-bold text-[#0a2463] dark:text-white max-w-[9rem] truncate">{me?.name || "Admin"}</span>
+              <span className="w-9 h-6 rounded-md overflow-hidden shadow ring-1 ring-black/5" title="Tunisie" aria-label="Tunisie">
+                <svg viewBox="0 0 30 20" className="w-full h-full" aria-hidden>
+                  <rect width="30" height="20" fill="#e70013" />
+                  <circle cx="15" cy="10" r="5" fill="#fff" />
+                  <circle cx="16" cy="10" r="3.6" fill="#e70013" />
+                  <circle cx="17" cy="10" r="2.9" fill="#fff" />
+                  <path d="M16.2 10l2.6-.85-1.6 2.2V8.65l1.6 2.2z" fill="#e70013" />
+                </svg>
+              </span>
+            </div>
           </div>
         </header>
 
@@ -846,7 +892,7 @@ function AdminLayoutContent({
             </div>
           ) : (
             <>
-              {currentAccess === "view" && currentSection !== "counter" && currentSection !== "calendar" && (
+              {currentAccess === "view" && READ_ONLY_RELEVANT(currentSection) && (
                 <div className="mb-4 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs font-semibold flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 shrink-0" />
                   Accès en lecture seule : les modifications de cette section sont réservées aux rôles autorisés.
@@ -856,6 +902,7 @@ function AdminLayoutContent({
             </>
           )}
         </main>
+        <AdminFooter />
       </div>
 
       {/* QUICK NEW BOOKING MODAL */}

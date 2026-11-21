@@ -9,9 +9,13 @@ import { requirePermission } from "@/lib/permissions";
 import { withExtraIcons } from "@/lib/extrasServer";
 import mongoose from "mongoose";
 import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected } from "@/lib/extras";
-import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
+import { quoteBookingDates } from "@/lib/rentalQuote";
+import { rateOn } from "@/lib/seasonalPricing";
 import { getRentalRules, priceSource } from "@/lib/rentalRules";
 import { bookingMoney, recordPayment, resyncAfterPriceChange } from "@/lib/ledger";
+import { logAudit } from "@/lib/audit";
+import { ChangeError, changeVehicle } from "@/lib/vehicleChange";
+import { notifyCustomerOfChange } from "@/lib/customerNotify";
 import { getVehicleStockAvailability } from "@/lib/availability";
 import {
   assignUnitManually,
@@ -121,7 +125,13 @@ export async function PATCH(
           );
         }
       }
-      return handleAction(id, body, session.user?.email || "Admin");
+      const res = await handleAction(id, body, session.user?.email || "Admin");
+      if (res.status < 300 && ["change_return", "extend", "record_pickup", "record_return", "assign_unit", "inspection", "change_vehicle"].includes(body.action) && !body.dryRun) {
+        const { action, damages, photos, checklist, signatureUrl, ...detail } = body as Record<string, unknown>;
+        void damages; void photos; void checklist; void signatureUrl;
+        await logAudit(session, `booking.${action}`, "booking", id, { after: detail });
+      }
+      return res;
     }
 
     const parsed = updateSchema.safeParse(body);
@@ -200,7 +210,13 @@ export async function PATCH(
         }
         if (nextPickup) updates.pickupDate = nextPickup;
         if (nextReturn) updates.returnDate = nextReturn;
-        if (nextPickup || nextReturn) updates.rentalDuration = computeRentalDays(p0, r0);
+        if (nextPickup || nextReturn) {
+          updates.rentalDuration = computeRentalDays(p0, r0);
+          // The price follows the dates (the agency may go below the minimum duration).
+          const q = await quoteBookingDates(currentBooking, p0, r0);
+          const pb = (currentBooking.pricingBreakdown as any).toObject ? (currentBooking.pricingBreakdown as any).toObject() : currentBooking.pricingBreakdown;
+          updates.pricingBreakdown = { ...pb, rentalDays: q.days, subtotal: q.subtotal, extrasTotal: q.extrasTotal, dailyRate: q.lines[0]?.dailyRate ?? pb.dailyRate, contributionLF2026: q.contribution, totalAmount: q.total };
+        }
       }
     }
 
@@ -212,7 +228,15 @@ export async function PATCH(
       updates.vehicleId !== previousModelId;
     if (typeof updates.vehicleId === "string" && !modelChanged) delete updates.vehicleId;
     if (modelChanged) {
-      updates.assignedUnits = (currentBooking.assignedUnits || []).filter((a) => String(a.vehicleId) !== previousModelId);
+      // A model change moves money (price difference, refund or balance): it has its own action.
+      return NextResponse.json(
+        { error: "Pour changer de voiture, utilisez « Changer de voiture » : le prix et le client sont mis à jour.", code: "USE_CHANGE_VEHICLE" },
+        { status: 409 }
+      );
+    }
+    // After a car change the rental is split between two cars: the start date can no longer move.
+    if (updates.pickupDate && (currentBooking.vehicleChanges || []).length > 0) {
+      return NextResponse.json({ error: "La voiture a été changée pendant cette location : la date de départ ne peut plus être modifiée." }, { status: 409 });
     }
 
     // Handle modification request decision (approve or reject)
@@ -246,37 +270,23 @@ export async function PATCH(
 
         // Recalculate duration & pricing if dates changed
         if (mod.pickupDate && mod.returnDate) {
-          // Same rules as the booking wizard: calendar days + price locked on the pickup-day period.
-          const days = computeRentalDays(mod.pickupDate, mod.returnDate);
-          updates.rentalDuration = days;
-          if (currentBooking.pricingBreakdown) {
-            const pb = (currentBooking.pricingBreakdown as any).toObject
-              ? (currentBooking.pricingBreakdown as any).toObject()
-              : currentBooking.pricingBreakdown;
-            const veh = currentBooking.vehicleId as unknown as { pricing?: { daily: number } } | null;
-            const iso = (d: Date) => new Date(d).toISOString().slice(0, 10);
-            const subtotal = veh?.pricing
-              ? calculateSeasonalRentalTotal(priceSource(veh, await getRentalRules()), iso(mod.pickupDate), iso(mod.returnDate)).subtotal
-              : pb.subtotal;
-            const extrasTotal = onlySelected(currentBooking.extras).reduce(
-              (acc, ex) => acc + extraLineTotal(ex.price || 0, ex.quantity || 1, days, ex.pricingType),
-              0
-            );
-            const oldDays = pb.rentalDays || currentBooking.rentalDuration || 1;
-            const perDayContrib = oldDays > 0 ? Math.round((pb.contributionLF2026 || 0) / oldDays) : 200;
-            const contrib = perDayContrib * days;
-            const fees = (pb.timbreFiscal ?? 100) + (pb.pickupLocationFee || 0) + (pb.returnLocationFee || 0) + (pb.differentLocationFee || 0);
-            const total = Math.max(0, subtotal + extrasTotal + fees + contrib - (pb.discountAmount || 0));
-            updates.pricingBreakdown = {
-              ...pb,
-              rentalDays: days,
-              subtotal,
-              extrasTotal,
-              dailyRate: Math.round(subtotal / days),
-              contributionLF2026: contrib,
-              totalAmount: total,
-            };
+          // Same rules as a new booking: period price, model and period minimum, every fee kept.
+          if ((currentBooking.vehicleChanges || []).length > 0) {
+            return NextResponse.json({ error: "La voiture a été changée pendant cette location : modifiez les dates avec « Prolonger / réduire »." }, { status: 409 });
           }
+          const q = await quoteBookingDates(currentBooking, new Date(mod.pickupDate), new Date(mod.returnDate));
+          if (q.minError) return NextResponse.json({ error: `Impossible d'accepter : ${q.minError}` }, { status: 409 });
+          updates.rentalDuration = q.days;
+          const pb = (currentBooking.pricingBreakdown as any).toObject ? (currentBooking.pricingBreakdown as any).toObject() : currentBooking.pricingBreakdown;
+          updates.pricingBreakdown = {
+            ...pb,
+            rentalDays: q.days,
+            subtotal: q.subtotal,
+            extrasTotal: q.extrasTotal,
+            dailyRate: q.lines[0]?.dailyRate ?? pb.dailyRate,
+            contributionLF2026: q.contribution,
+            totalAmount: q.total,
+          };
         }
 
         updates["modificationRequest.status"] = "approved";
@@ -367,6 +377,39 @@ export async function PATCH(
       .populate("pickupLocationId")
       .populate("returnLocationId");
     if (updates.pricingBreakdown) await resyncAfterPriceChange(id);
+    // Cancelled while money is held: the team must give it back (or record a cancellation fee).
+    if (booking && ["cancelled", "rejected"].includes(booking.bookingStatus) && !["cancelled", "rejected"].includes(oldBooking.bookingStatus)) {
+      const held = await bookingMoney(id, 0);
+      if (held.paid > 0 || held.depositHeld > 0) {
+        await notifyStaff({
+          type: "cancel_with_money",
+          category: "payment",
+          severity: "warning",
+          title: { fr: `Annulée avec argent encaissé — ${booking.bookingReference}`, en: `Cancelled with money held — ${booking.bookingReference}`, ar: `ملغاة مع مبلغ مقبوض — ${booking.bookingReference}` },
+          message: {
+            fr: `Encaissé : ${(held.paid / 100).toFixed(3)} DT${held.depositHeld ? `, caution : ${(held.depositHeld / 100).toFixed(3)} DT` : ""}. Enregistrez le remboursement (ou les frais d'annulation) dans Encaissements.`,
+            en: `Paid: ${(held.paid / 100).toFixed(3)} DT. Record the refund in Payments.`,
+            ar: `${(held.paid / 100).toFixed(3)} DT`,
+          },
+          link: `/admin/accounting?tab=payments`,
+          dedupeKey: `cancel_money:${id}`,
+        });
+      }
+    }
+    await logAudit(session, updates.pricingBreakdown ? "booking.price" : "booking.update", "booking", id, {
+      before: {
+        status: oldBooking.bookingStatus,
+        pickup: oldBooking.pickupDate?.toISOString().slice(0, 10),
+        return: oldBooking.returnDate?.toISOString().slice(0, 10),
+        total: oldBooking.pricingBreakdown?.totalAmount,
+      },
+      after: {
+        status: booking?.bookingStatus,
+        pickup: booking?.pickupDate?.toISOString().slice(0, 10),
+        return: booking?.returnDate?.toISOString().slice(0, 10),
+        total: booking?.pricingBreakdown?.totalAmount,
+      },
+    });
 
     if (!booking) return NextResponse.json({ error: "Booking not found" }, { status: 404 });
 
@@ -479,6 +522,10 @@ const changeReturn = {
   /** Daily price applied to extra days, in TND. Defaults to the model's base daily price. */
   dailyRateTND: z.number().min(0).max(100000).optional(),
   notes: z.string().max(1000).optional(),
+  /** Email + WhatsApp link to the customer with the new total (default yes). */
+  notifyCustomer: z.boolean().optional(),
+  /** Price preview: nothing is saved. */
+  dryRun: z.boolean().optional(),
 };
 
 /** Only documents stored by our own private upload route. */
@@ -509,6 +556,21 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("extend"), ...changeReturn }),
   z.object({ action: z.literal("change_return"), ...changeReturn }),
   z.object({ action: z.literal("add_note"), note: z.string().trim().min(1).max(1000) }),
+  // Car change, possibly in the middle of the rental (breakdown, upgrade, customer request).
+  z.object({
+    action: z.literal("change_vehicle"),
+    lineIndex: z.number().int().min(0).max(20).default(0),
+    effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    newVehicleId: z.string(),
+    newUnitId: z.string().optional(),
+    priceMode: z.enum(["recalculate", "keep"]).default("recalculate"),
+    oldCarMileage: z.number().min(0).max(2_000_000).optional(),
+    newCarMileage: z.number().min(0).max(2_000_000).optional(),
+    oldCarToGarage: z.boolean().optional(),
+    reason: z.string().trim().max(500).default(""),
+    notifyCustomer: z.boolean().default(true),
+    dryRun: z.boolean().optional(),
+  }),
   // Vehicle condition report at departure or return.
   z.object({
     action: z.literal("inspection"),
@@ -541,6 +603,17 @@ async function handleAction(id: string, body: unknown, by: string) {
     return NextResponse.json({ success: true, licensePlate: res.licensePlate });
   }
 
+  if (a.action === "change_vehicle") {
+    try {
+      const res = await changeVehicle(id, a, by);
+      if (!("money" in res)) return NextResponse.json({ success: true, quote: res.quote });
+      return NextResponse.json({ success: true, quote: res.quote, money: res.money, customer: res.customer, movedElsewhere: res.movedElsewhere, booking: res.booking });
+    } catch (err) {
+      if (err instanceof ChangeError) return NextResponse.json({ error: err.message, code: err.code }, { status: err.status });
+      throw err;
+    }
+  }
+
   if (a.action === "auto_assign") {
     const assigned = await autoAssignUnits(id);
     return NextResponse.json({ success: true, assignedUnits: assigned });
@@ -554,7 +627,7 @@ async function handleAction(id: string, body: unknown, by: string) {
     model: string;
     pricing: { daily: number };
   } | null;
-  const plates = (booking.assignedUnits || []).map((u) => u.licensePlate).filter(Boolean).join(", ");
+  const plates = (booking.assignedUnits || []).filter((u) => !u.to).map((u) => u.licensePlate).filter(Boolean).join(", ");
   const carLabel = `${vehicle?.brand || ""} ${vehicle?.model || ""}${plates ? ` (${plates})` : ""}`.trim();
 
   if (a.action === "add_note") {
@@ -687,7 +760,8 @@ async function handleAction(id: string, body: unknown, by: string) {
     await syncBookingAssignment(id); // frees the car for the next customer
     if (a.unitStatus === "maintenance") {
       for (const u of booking.assignedUnits || []) {
-        if (!u.unitId) continue;
+        // Only the car brought back now (a car replaced earlier was handled at the change).
+        if (!u.unitId || u.to) continue;
         await Vehicle.updateOne({ _id: u.vehicleId, "units._id": u.unitId }, { $set: { "units.$.status": "maintenance" } });
         await reassignBookingsOfUnit(String(u.unitId));
       }
@@ -724,6 +798,20 @@ async function handleAction(id: string, body: unknown, by: string) {
   if (newReturn <= new Date(booking.pickupDate)) {
     return NextResponse.json({ error: "Le retour doit rester après la date de départ." }, { status: 400 });
   }
+  // After a car change the new car must keep at least one day.
+  const lastSwitch = (booking.assignedUnits || [])
+    .filter((x) => !x.to && x.from)
+    .map((x) => new Date(x.from as Date))
+    .sort((x, y) => y.getTime() - x.getTime())[0];
+  if (lastSwitch && holdDays(newReturn, newReturn)[0] <= holdDays(lastSwitch, lastSwitch)[0]) {
+    return NextResponse.json(
+      { error: `La voiture a été changée le ${lastSwitch.toLocaleDateString("fr-FR", { timeZone: "UTC" })} : le retour doit être après cette date.` },
+      { status: 409 }
+    );
+  }
+  // Rate of the car the customer has now (it can differ from the start of the rental after a car change).
+  const changes = booking.vehicleChanges || [];
+  const currentRate = changes.length && (booking.vehicles?.length || 1) === 1 ? changes[changes.length - 1].newDailyRate : null;
   const delta = newDays - oldDays;
   const perDayContrib = oldDays > 0 ? Math.round((pb.contributionLF2026 || 0) / oldDays) : 0;
   const perDayExtras = (days: number) =>
@@ -745,8 +833,26 @@ async function handleAction(id: string, body: unknown, by: string) {
         { status: 409 }
       );
     }
-    dailyUsed = a.dailyRateTND !== undefined ? Math.round(a.dailyRateTND * 100) : Number(vehicle?.pricing?.daily || 0);
-    const rental = dailyUsed * delta * Math.max(1, booking.vehicles?.length || 1);
+    // Price locked at the start of the rental: extra days at the rate of the period of the PICKUP
+    // day (same rule as a booking spanning two periods), for the car the customer has now (after a
+    // car change: the new model), with the model's degressive tariff for the new total duration.
+    // Each car of a multi-car booking at its own model's rate. A custom price (pricing.edit) wins.
+    const ids = booking.vehicles && booking.vehicles.length > 0 ? booking.vehicles.map((v) => String(v.vehicleId)) : [String(vehicle?._id || booking.vehicleId)];
+    let rental: number;
+    if (a.dailyRateTND !== undefined) {
+      dailyUsed = Math.round(a.dailyRateTND * 100);
+      rental = dailyUsed * delta * ids.length;
+    } else {
+      const models = await Vehicle.find({ _id: { $in: ids } }).lean();
+      const rules = await getRentalRules();
+      const pickupDay = holdDays(booking.pickupDate, booking.pickupDate)[0];
+      const rate = (vid: string) => {
+        const m = models.find((x) => String(x._id) === vid);
+        return m ? rateOn(priceSource(m, rules), pickupDay, newDays) : Number(currentRate ?? vehicle?.pricing?.daily ?? 0);
+      };
+      rental = ids.reduce((acc, vid) => acc + rate(vid) * delta, 0);
+      dailyUsed = Math.round(rental / delta / ids.length);
+    }
     const extras = perDayExtras(delta);
     amount = rental + extras + perDayContrib * delta;
     pb.subtotal = (pb.subtotal || 0) + rental;
@@ -754,8 +860,9 @@ async function handleAction(id: string, body: unknown, by: string) {
   } else if (delta < 0) {
     // Reduction: the removed days are refunded at the booking's average daily price.
     const removed = -delta;
-    dailyUsed = Math.round((pb.subtotal || 0) / oldDays);
-    const rental = Math.round(((pb.subtotal || 0) * removed) / oldDays);
+    // The removed days are the last ones: after a car change they are at the current car's rate.
+    dailyUsed = currentRate ?? Math.round((pb.subtotal || 0) / oldDays);
+    const rental = Math.min(pb.subtotal || 0, currentRate !== null ? currentRate * removed : Math.round(((pb.subtotal || 0) * removed) / oldDays));
     const extras = perDayExtras(removed);
     amount = -(rental + extras + perDayContrib * removed);
     pb.subtotal = Math.max(0, (pb.subtotal || 0) - rental);
@@ -771,6 +878,10 @@ async function handleAction(id: string, body: unknown, by: string) {
     if (isPerDayPricing(ex.pricingType) && (ex.quantity || 0) > 0) {
       ex.lineTotal = extraLineTotal(ex.price || 0, ex.quantity || 1, newDays, "per_day");
     }
+  }
+  // Preview for the form: nothing is saved.
+  if (a.dryRun) {
+    return NextResponse.json({ success: true, quote: { extraDays: delta, dailyRate: dailyUsed, amount, newTotal: pb.totalAmount } });
   }
   if (delta > 0 && booking.paymentStatus === "paid") booking.paymentStatus = "partial";
   booking.extensions = [
@@ -810,16 +921,36 @@ async function handleAction(id: string, body: unknown, by: string) {
     data: { bookingId: id, licensePlate: plates, extraDays: delta, amount },
   });
 
-  return NextResponse.json({ success: true, booking, extraDays: delta, amount });
+  // The customer is told about the new date and the new amount (email + ready WhatsApp link).
+  let customer: { emailSent: boolean; whatsappUrl: string | null } = { emailSent: false, whatsappUrl: null };
+  const money = await bookingMoney(id, pb.totalAmount || 0);
+  if (a.notifyCustomer !== false && delta !== 0) {
+    const fr = newReturn.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+    const en = newReturn.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+    const abs = `${(Math.abs(amount) / 100).toFixed(3)} DT`;
+    customer = await notifyCustomerOfChange(id, {
+      kind: "dates_change",
+      lines: {
+        fr: [`Nouvelle date de retour : ${fr}${booking.returnTime ? ` à ${booking.returnTime}` : ""} (${delta > 0 ? "prolongation" : "réduction"} de ${Math.abs(delta)} jour(s)).`, `${delta > 0 ? "Supplément" : "Montant déduit"} : ${abs}.`],
+        en: [`New return date: ${en}${booking.returnTime ? ` at ${booking.returnTime}` : ""} (${delta > 0 ? "extended" : "shortened"} by ${Math.abs(delta)} day(s)).`, `${delta > 0 ? "Extra charge" : "Amount deducted"}: ${abs}.`],
+        ar: [`تاريخ الإرجاع الجديد: ${en}`, `${delta > 0 ? "مبلغ إضافي" : "مبلغ مخصوم"}: ${abs}`],
+      },
+      total: money.total,
+      paid: money.paid,
+      remaining: money.remaining,
+      refundDue: money.refundDue,
+    });
+  }
+  return NextResponse.json({ success: true, booking, extraDays: delta, amount, money, customer });
 }
 
 /** Records the odometer on the assigned physical car(s) (never decreases it). */
 async function updateUnitMileage(
-  booking: { assignedUnits?: { vehicleId: mongoose.Types.ObjectId; unitId?: mongoose.Types.ObjectId }[] },
+  booking: { assignedUnits?: { vehicleId: mongoose.Types.ObjectId; unitId?: mongoose.Types.ObjectId; to?: Date }[] },
   mileage: number
 ) {
   for (const a of booking.assignedUnits || []) {
-    if (!a.unitId) continue;
+    if (!a.unitId || a.to) continue;
     await Vehicle.updateOne(
       { _id: a.vehicleId, "units._id": a.unitId, "units.mileage": { $lt: mileage } },
       { $set: { "units.$.mileage": mileage } }

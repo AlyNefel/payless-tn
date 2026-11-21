@@ -1,0 +1,33 @@
+const B = process.env.TEST_URL || "http://localhost:3456";
+function session() { let c = {}; const jar = () => Object.entries(c).map(([k, v]) => k + "=" + v).join("; "); const st = (r) => { for (const x of r.headers.getSetCookie()) { const [kv] = x.split(";"); const i = kv.indexOf("="); c[kv.slice(0, i)] = kv.slice(i + 1); } };
+  return { async login(e, p) { const cs = await fetch(B + "/api/auth/csrf"); st(cs); const t = (await cs.json()).csrfToken; st(await fetch(B + "/api/auth/callback/credentials", { method: "POST", redirect: "manual", body: new URLSearchParams({ csrfToken: t, email: e, password: p }), headers: { cookie: jar(), "content-type": "application/x-www-form-urlencoded" } })); },
+    async req(path, method = "GET", body) { const r = await fetch(B + path, { method, headers: { cookie: jar(), "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined }); let j; try { j = await r.json(); } catch { j = {}; } return { s: r.status, j }; } }; }
+const log = (n, ok, x = "") => console.log(`${ok ? "PASS" : "FAIL"}  ${n} ${x}`);
+const tag = Date.now().toString(36);
+const A = session(); await A.login("admin@paylesscarrental.com", process.env.ADMIN_INITIAL_PASSWORD || "TestPassword123!");
+const wEmail = `wp_${tag}@ex.com`;
+await A.req("/api/admin/users", "POST", { name: "Agent Prix", email: wEmail, password: "workerpass1", role: "worker" });
+const W = session(); await W.login(wEmail, "workerpass1");
+const locs = (await (await fetch(B + "/api/locations")).json()).locations;
+const car = (await (await fetch(B + "/api/vehicles?pickupDate=2029-03-01&returnDate=2029-03-04&limit=50")).json()).vehicles.find((v) => v.availableUnits >= 3);
+const mk = await (await fetch(B + "/api/bookings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vehicleId: car._id, vehicles: [{ vehicleId: car._id, extras: [] }], pickupLocationId: locs[0]._id, returnLocationId: locs[0]._id, pickupDate: "2029-03-01", returnDate: "2029-03-04", pickupTime: "10:00", returnTime: "10:00", customer: { firstName: "Wp", lastName: tag, email: `wp_${tag}_c@ex.com`, phone: "+21624000111", country: "Tunisie", preferredLanguage: "fr", drivingLicenceYear: 2015, licenceIssueYear: 2015, dateOfBirth: "1990-01-01" }, customerLanguage: "fr", accountOption: "guest", acceptTerms: true }) })).json();
+const id = (await A.req(`/api/admin/bookings?search=${mk.bookingReference}`)).j.bookings[0]._id;
+const get = async () => (await A.req(`/api/admin/bookings/${id}`)).j.booking;
+const before = await get(); const total0 = before.pricingBreakdown.totalAmount;
+let r = await W.req(`/api/admin/bookings/${id}`, "PATCH", { pricingBreakdown: { totalAmount: 100 }, "pricingBreakdown.totalAmount": 100, depositAmount: 0, extras: [], rentalDuration: 1, internalNotes: "note" });
+let b = await get();
+log("worker cannot overwrite total / deposit / options", b.pricingBreakdown.totalAmount === total0 && b.rentalDuration === before.rentalDuration && (b.extras || []).length === (before.extras || []).length, `status=${r.s} total=${b.pricingBreakdown.totalAmount}`);
+log("…but the allowed field (note) was saved", b.internalNotes === "note");
+r = await W.req(`/api/admin/bookings/${id}`, "PATCH", { action: "change_return", newReturnDate: "2029-03-06", dailyRateTND: 1 });
+log("worker: custom price on extension refused (403)", r.s === 403 && r.j.code === "PRICE_NOT_ALLOWED", r.j.error);
+r = await W.req(`/api/admin/bookings/${id}`, "PATCH", { action: "change_return", newReturnDate: "2029-03-06" });
+b = await get();
+const std = Number(car.pricing.daily) * 2;
+log("worker: extension at the standard rate works", r.s === 200 && b.pricingBreakdown.subtotal === before.pricingBreakdown.subtotal + std, `+${b.pricingBreakdown.subtotal - before.pricingBreakdown.subtotal} expected +${std}`);
+r = await A.req(`/api/admin/bookings/${id}`, "PATCH", { "pricingBreakdown.totalAmount": 100, customerId: "000000000000000000000000" });
+const b2 = await get();
+log("even a super admin cannot inject amounts through the generic update", b2.pricingBreakdown.totalAmount === b.pricingBreakdown.totalAmount && String(b2.customerId?._id || b2.customerId) === String(b.customerId?._id || b.customerId));
+r = await A.req(`/api/admin/bookings/${id}`, "PATCH", { action: "change_return", newReturnDate: "2029-03-07", dailyRateTND: 50 });
+log("super admin can still set a custom extension price", r.s === 200 && r.j.amount !== undefined, `amount=${r.j.amount}`);
+r = await A.req(`/api/admin/bookings/${id}`, "PATCH", { status: "confirmed", paymentStatus: "paid", internalNotes: "ok" });
+log("normal admin edit (status, payment, notes) still works", r.s === 200);

@@ -86,12 +86,22 @@ export default function WorkerPage() {
   const [paying, setPaying] = useState<Row | null>(null);
   const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
 
+  // The server selects what the counter needs (every booking, not only the latest ones):
+  // departures due until tomorrow, every car on the road, and the latest bookings for "Toutes".
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/bookings?limit=200", { cache: "no-store" });
-      const d = await res.json();
-      if (d.success) setRows(d.bookings);
+      const get = (q: string) => fetch(`/api/admin/bookings?${q}`, { cache: "no-store" }).then((r) => r.json()).then((d) => (d.success ? (d.bookings as Row[]) : []));
+      const until = dayStr(1);
+      const [pending, confirmed, active, latest] = await Promise.all([
+        get(`status=pending&dateField=pickup&to=${until}&sort=pickup_asc&limit=200`),
+        get(`status=confirmed&dateField=pickup&to=${until}&sort=pickup_asc&limit=200`),
+        get(`status=active&sort=return_asc&limit=200`),
+        get(`limit=100`),
+      ]);
+      const byId = new Map<string, Row>();
+      for (const r of [...pending, ...confirmed, ...active, ...latest]) byId.set(r._id, r);
+      setRows([...byId.values()]);
     } finally {
       setLoading(false);
     }
@@ -100,6 +110,23 @@ export default function WorkerPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Search: done by the server so an old booking is found too.
+  const [found, setFound] = useState<Row[] | null>(null);
+  useEffect(() => {
+    const s = q.trim();
+    if (s.length < 2) {
+      setFound(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      fetch(`/api/admin/bookings?search=${encodeURIComponent(s)}&limit=50`, { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => setFound(d.success ? d.bookings : []))
+        .catch(() => setFound([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
   const notify = (ok: boolean, text: string) => {
     setToast({ ok, text });
@@ -118,10 +145,11 @@ export default function WorkerPage() {
 
   const shown = useMemo(() => {
     const s = q.trim().toLowerCase();
+    if (s && found) return found;
     const base = s ? rows : tab === "pickups" ? lists.pickups : tab === "returns" ? lists.returns : rows;
     if (!s) return base;
     return base.filter((r) => `${r.reference} ${r.customerName} ${r.customerPhone} ${r.vehicleName} ${r.licensePlate}`.toLowerCase().includes(s));
-  }, [q, rows, tab, lists]);
+  }, [q, rows, tab, lists, found]);
 
   const canEdit = can("bookings.edit");
 
