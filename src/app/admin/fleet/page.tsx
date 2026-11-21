@@ -1,5 +1,6 @@
 "use client";
 
+import { NumberInput } from "@/components/admin/ui/NumberInput";
 import React, { useState, useEffect } from "react";
 import { useAdminLang } from "@/contexts/AdminLangContext";
 import {
@@ -1502,18 +1503,12 @@ export default function AdminFleetPage() {
                         </p>
                       </div>
                       <div className="relative w-40">
-                        <input
-                          type="number"
+                        <NumberInput
                           required
                           min={1}
                           max={365}
                           value={formData.minRentalDays}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              minRentalDays: Math.max(1, Number(e.target.value) || 1),
-                            })
-                          }
+                          onValueChange={(n) => setFormData((f) => ({ ...f, minRentalDays: n }))}
                           className="w-full rounded-lg bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 px-3 py-2 text-slate-800 dark:text-white font-bold focus:outline-none focus:border-blue-500 pr-14"
                         />
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-blue-500">

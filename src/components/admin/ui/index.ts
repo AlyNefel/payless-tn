@@ -5,3 +5,4 @@ export { QuickView, Field, Section, btn } from "./QuickView";
 export { StatusBadge, BOOKING_STATUS, PAYMENT_STATUS } from "./StatusBadge";
 export { usePermissions } from "./usePermissions";
 export { ColorStat } from "./ColorStat";
+export { NumberInput } from "./NumberInput";
