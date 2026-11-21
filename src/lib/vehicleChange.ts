@@ -3,7 +3,7 @@ import connectDB from "./db";
 import { Booking, Vehicle } from "@/models";
 import type { IAssignedUnit } from "@/models/Booking";
 import { computeRentalDays } from "./extras";
-import { calculateSeasonalRentalTotal } from "./seasonalPricing";
+import { rateOn } from "./seasonalPricing";
 import { getRentalRules, priceSource } from "./rentalRules";
 import { HOLDING_STATUSES } from "./bookingOverlap";
 import { claimUnit, holdDays, listUnitAvailability, reassignBookingsOfUnit, segmentDays, syncBookingAssignment, unitLabel } from "./fleetUnits";
@@ -121,8 +121,9 @@ export async function changeVehicle(bookingId: string, input: ChangeVehicleInput
   const daysChanged = split ? computeRentalDays(eff, returnDay) : totalDays;
   const oldDaily = Number(lines[i].dailyRate || pb.dailyRate || 0);
   const rules = await getRentalRules();
-  // Same rule as a new booking of that model: rate of the pickup-day period, degressive on the full duration.
-  const listDaily = calculateSeasonalRentalTotal(priceSource(newModel, rules), pickupDay, returnDay).averageDailyRate || Number(newModel.pricing?.daily || 0);
+  // The new car at the rate of the period in force on the change date (whole rental: the pickup
+  // day), with the new model's degressive tariff for the full duration of the rental.
+  const listDaily = rateOn(priceSource(newModel, rules), eff, totalDays) || Number(newModel.pricing?.daily || 0);
   const newDaily = input.priceMode === "keep" ? oldDaily : listDaily;
   const amount = (newDaily - oldDaily) * daysChanged;
   const newTotal = Math.max(0, (pb.totalAmount || 0) + amount);

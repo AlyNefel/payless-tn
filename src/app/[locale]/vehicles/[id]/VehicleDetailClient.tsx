@@ -91,7 +91,7 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
   const withRules = <T extends { minRentalDays?: number; pricing?: any }>(v: T): T => ({
     ...v,
     minRentalDays: Math.max(Number(v.minRentalDays || v.pricing?.minRentalDays || 1), liveRules.minRentalDaysGlobal),
-    pricing: { ...(v.pricing || {}), globalSeasons: liveRules.seasons, durationDiscounts: liveRules.durationDiscounts },
+    pricing: { ...(v.pricing || {}), globalSeasons: liveRules.seasons },
   });
 
   useEffect(() => {

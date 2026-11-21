@@ -23,9 +23,9 @@ export async function PUT(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const userId = guard.session.user?.id;
   // Periods and minimum durations are set per model (Tarifs par période → each car).
-  if (body.seasons !== undefined || body.minRentalDaysGlobal !== undefined) {
+  if (body.seasons !== undefined || body.minRentalDaysGlobal !== undefined || body.durationDiscounts !== undefined) {
     return NextResponse.json(
-      { success: false, error: "Les périodes et la durée minimale se règlent maintenant par modèle de voiture.", code: "PER_MODEL" },
+      { success: false, error: "Les périodes, la durée minimale et les tarifs dégressifs se règlent maintenant par modèle de voiture.", code: "PER_MODEL" },
       { status: 410 }
     );
   }

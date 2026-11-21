@@ -115,11 +115,11 @@ export function migrateGlobalPricingToModels(): Promise<void> {
       await connectDB();
       const done = await AgencySetting.findOne({ key: "pricingPerModelVersion" }).lean();
       if (done) return;
-      const [globalMin, seasons] = await Promise.all([getGlobalMinRentalDays(), getGlobalSeasons()]);
+      const [globalMin, seasons, tiers] = await Promise.all([getGlobalMinRentalDays(), getGlobalSeasons(), getDurationDiscounts()]);
       const active = seasons.filter((x) => x.active !== false);
       const { default: Vehicle } = await import("@/models/Vehicle");
       const report: string[] = [];
-      if (globalMin > 1 || active.length) {
+      if (globalMin > 1 || active.length || tiers.length) {
         for (const v of await Vehicle.find({})) {
           const changes: string[] = [];
           if (globalMin > 1 && (v.minRentalDays || 1) < globalMin) {
@@ -143,6 +143,10 @@ export function migrateGlobalPricingToModels(): Promise<void> {
             ] as never;
             changes.push(`période ${g.name}`);
           }
+          if (tiers.length && !(v.pricing.durationDiscounts || []).length) {
+            v.pricing.durationDiscounts = tiers.map((t) => ({ minDays: t.minDays, percent: t.percent })) as never;
+            changes.push("tarif dégressif");
+          }
           if (changes.length) {
             v.markModified("pricing");
             await v.save();
@@ -152,6 +156,7 @@ export function migrateGlobalPricingToModels(): Promise<void> {
       }
       await setGlobalMinRentalDays(1);
       await setGlobalSeasons([]);
+      await setDurationDiscounts([]);
       await AgencySetting.updateOne(
         { key: "pricingPerModelVersion" },
         { $set: { value: { version: 1, at: new Date(), report }, group: "system", label: "Tarifs par modèle (migration)", type: "json" } },
@@ -167,8 +172,8 @@ export function migrateGlobalPricingToModels(): Promise<void> {
 
 export async function getRentalRules(): Promise<RentalRules> {
   await migrateGlobalPricingToModels();
-  // Period prices and minimum durations live on each model; only the degressive tariff is fleet-wide.
-  return { minRentalDaysGlobal: 1, seasons: [], durationDiscounts: await getDurationDiscounts() };
+  // Period prices, minimum durations and degressive tariffs all live on each model.
+  return { minRentalDaysGlobal: 1, seasons: [], durationDiscounts: [] };
 }
 
 /**
@@ -183,7 +188,7 @@ export function applyRules<T extends { minRentalDays?: number; pricing?: any }>(
     ...vehicle,
     minRentalDays: base,
     minRentalDaysForPeriod: min,
-    pricing: { ...(vehicle.pricing || {}), minRentalDays: base, globalSeasons: rules.seasons, durationDiscounts: rules.durationDiscounts },
+    pricing: { ...(vehicle.pricing || {}), minRentalDays: base, globalSeasons: rules.seasons },
   };
 }
 
@@ -230,5 +235,5 @@ export function effectiveMinDays(
 /** Plain pricing object (vehicle + fleet-wide periods) for the server-side price calculation. */
 export function priceSource(vehicle: any, rules: RentalRules): { minRentalDays?: number; pricing: any } {
   const pricing = vehicle?.pricing?.toObject ? vehicle.pricing.toObject() : { ...(vehicle?.pricing || {}) };
-  return { minRentalDays: vehicle?.minRentalDays, pricing: { ...pricing, globalSeasons: rules.seasons, durationDiscounts: rules.durationDiscounts } };
+  return { minRentalDays: vehicle?.minRentalDays, pricing: { ...pricing, globalSeasons: rules.seasons } };
 }

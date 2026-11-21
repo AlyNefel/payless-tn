@@ -195,6 +195,21 @@ export function getVehicleEffectiveDailyRate(vehicle: any, dateOrStr?: Date | st
 }
 
 /**
+ * Daily rate of a model for days starting on `day`: the period in force that day (the model's own
+ * periods), then the model's degressive tariff for a rental of `totalDays` days. Used for the days
+ * added by an extension and for the days covered by a new car after a car change.
+ */
+export function rateOn(vehicle: any, day: Date | string, totalDays: number): number {
+  let rate = getVehicleEffectiveDailyRate(vehicle, dayKey(day));
+  const pct = durationDiscountPercent(totalDays, vehicle?.pricing?.durationDiscounts);
+  if (pct > 0 && rate > 0) {
+    const unit = rate >= 1000 ? 100 : 1;
+    rate = Math.max(unit, Math.round((rate * (1 - pct / 100)) / unit) * unit);
+  }
+  return rate;
+}
+
+/**
  * Computes the total rental subtotal.
  *
  * Price guarantee: the daily rate in force on the PICKUP day is locked for the

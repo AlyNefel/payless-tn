@@ -10,6 +10,8 @@ import { withExtraIcons } from "@/lib/extrasServer";
 import mongoose from "mongoose";
 import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected } from "@/lib/extras";
 import { quoteBookingDates } from "@/lib/rentalQuote";
+import { rateOn } from "@/lib/seasonalPricing";
+import { getRentalRules, priceSource } from "@/lib/rentalRules";
 import { bookingMoney, recordPayment, resyncAfterPriceChange } from "@/lib/ledger";
 import { logAudit } from "@/lib/audit";
 import { ChangeError, changeVehicle } from "@/lib/vehicleChange";
@@ -522,6 +524,8 @@ const changeReturn = {
   notes: z.string().max(1000).optional(),
   /** Email + WhatsApp link to the customer with the new total (default yes). */
   notifyCustomer: z.boolean().optional(),
+  /** Price preview: nothing is saved. */
+  dryRun: z.boolean().optional(),
 };
 
 /** Only documents stored by our own private upload route. */
@@ -829,14 +833,22 @@ async function handleAction(id: string, body: unknown, by: string) {
         { status: 409 }
       );
     }
-    // Extension at the base price of the car the customer has now (after a car change: the new model).
-    dailyUsed = a.dailyRateTND !== undefined ? Math.round(a.dailyRateTND * 100) : Number(vehicle?.pricing?.daily ?? currentRate ?? 0);
-    // Several cars: each one at its own model's base price (not the first car's price for all).
-    let rental = dailyUsed * delta * Math.max(1, booking.vehicles?.length || 1);
-    if (a.dailyRateTND === undefined && (booking.vehicles?.length || 0) > 1) {
-      const ids = booking.vehicles!.map((v) => String(v.vehicleId));
-      const models = await Vehicle.find({ _id: { $in: ids } }).select("pricing.daily").lean();
-      const rate = (vid: string) => Number(models.find((m) => String(m._id) === vid)?.pricing?.daily || dailyUsed);
+    // Extra days at the rate of the period they fall in, for the car the customer has now
+    // (after a car change: the new model), with the model's degressive tariff for the new duration.
+    // Each car of a multi-car booking at its own model's rate. A custom price (pricing.edit) wins.
+    const ids = booking.vehicles && booking.vehicles.length > 0 ? booking.vehicles.map((v) => String(v.vehicleId)) : [String(vehicle?._id || booking.vehicleId)];
+    let rental: number;
+    if (a.dailyRateTND !== undefined) {
+      dailyUsed = Math.round(a.dailyRateTND * 100);
+      rental = dailyUsed * delta * ids.length;
+    } else {
+      const models = await Vehicle.find({ _id: { $in: ids } }).lean();
+      const rules = await getRentalRules();
+      const firstExtraDay = holdDays(previousReturn, previousReturn)[0];
+      const rate = (vid: string) => {
+        const m = models.find((x) => String(x._id) === vid);
+        return m ? rateOn(priceSource(m, rules), firstExtraDay, newDays) : Number(currentRate ?? vehicle?.pricing?.daily ?? 0);
+      };
       rental = ids.reduce((acc, vid) => acc + rate(vid) * delta, 0);
       dailyUsed = Math.round(rental / delta / ids.length);
     }
@@ -865,6 +877,10 @@ async function handleAction(id: string, body: unknown, by: string) {
     if (isPerDayPricing(ex.pricingType) && (ex.quantity || 0) > 0) {
       ex.lineTotal = extraLineTotal(ex.price || 0, ex.quantity || 1, newDays, "per_day");
     }
+  }
+  // Preview for the form: nothing is saved.
+  if (a.dryRun) {
+    return NextResponse.json({ success: true, quote: { extraDays: delta, dailyRate: dailyUsed, amount, newTotal: pb.totalAmount } });
   }
   if (delta > 0 && booking.paymentStatus === "paid") booking.paymentStatus = "partial";
   booking.extensions = [

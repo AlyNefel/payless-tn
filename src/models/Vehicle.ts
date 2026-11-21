@@ -60,6 +60,8 @@ export interface IVehicle {
     currency: string;
     deposit: number;
     seasonalPrices?: ISeasonalPrice[];
+    /** Degressive tariff of this model: from `minDays` days, `percent` % off the daily rate. */
+    durationDiscounts?: { minDays: number; percent: number }[];
     minRentalDays?: number;
   };
   minRentalDays?: number;
@@ -127,6 +129,13 @@ const VehicleSchema = new Schema<IVehicle>(
       currency: { type: String, default: "TND" },
       deposit: { type: Number, default: 0 },
       minRentalDays: { type: Number, default: 1 },
+      durationDiscounts: [
+        {
+          _id: false,
+          minDays: { type: Number, required: true, min: 2, max: 365 },
+          percent: { type: Number, required: true, min: 0, max: 90 },
+        },
+      ],
       seasonalPrices: [
         {
           name: { type: String, default: "" },

@@ -20,7 +20,7 @@ import {
   Copy,
 } from "lucide-react";
 import Image from "next/image";
-import { DurationDiscountsCard } from "@/components/admin/DurationDiscountsCard";
+import { DegressiveEditor, type Tier } from "@/components/admin/DegressiveEditor";
 import { PeriodEditor, type PricePeriod } from "@/components/admin/PeriodEditor";
 import { CopyPeriodsDialog } from "@/components/admin/CopyPeriodsDialog";
 
@@ -32,6 +32,7 @@ interface VehiclePricing {
   monthly: number;
   deposit: number;
   seasonalPrices: SeasonalPeriod[];
+  durationDiscounts?: Tier[];
 }
 
 interface VehicleItem {
@@ -145,6 +146,7 @@ export default function AdminPricingPage() {
           vehicleId: vehicle._id,
           dailyRate: vehicle.pricing.daily,
           seasonalPrices: vehicle.pricing.seasonalPrices,
+          durationDiscounts: vehicle.pricing.durationDiscounts || [],
           minRentalDays: vehicle.minRentalDays || 1,
         }),
       });
@@ -213,7 +215,6 @@ export default function AdminPricingPage() {
       </div>
 
 
-      <DurationDiscountsCard />
       {/* Search & Actions Bar */}
       <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div className="relative w-full sm:w-96">
@@ -368,6 +369,17 @@ export default function AdminPricingPage() {
                     <span>{message.text}</span>
                   </div>
                 )}
+
+                {/* Degressive tariff of this model */}
+                <div className="px-5 sm:px-6 pt-5">
+                  <DegressiveEditor
+                    tiers={vehicle.pricing.durationDiscounts || []}
+                    baseRate={vehicle.pricing.daily}
+                    onChange={(tiers) =>
+                      setVehicles((prev) => prev.map((v) => (v._id === vehicle._id ? { ...v, pricing: { ...v.pricing, durationDiscounts: tiers } } : v)))
+                    }
+                  />
+                </div>
 
                 {/* Seasonal Periods List */}
                 <div className="p-5 sm:p-6 space-y-4">

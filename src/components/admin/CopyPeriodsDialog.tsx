@@ -13,7 +13,7 @@ interface Model {
   category: string;
   categoryId?: string;
   minRentalDays?: number;
-  pricing: { daily: number; seasonalPrices: PricePeriod[] };
+  pricing: { daily: number; seasonalPrices: PricePeriod[]; durationDiscounts?: { minDays: number; percent: number }[] };
 }
 
 /**
@@ -26,6 +26,7 @@ export function CopyPeriodsDialog({ source, vehicles, onClose, onDone }: { sourc
   const [selected, setSelected] = useState<Set<string>>(() => new Set(sameCategory));
   const [priceMode, setPriceMode] = useState<"percent" | "same">("percent");
   const [withMin, setWithMin] = useState(true);
+  const [withTiers, setWithTiers] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const toggle = (id: string) => setSelected((s) => {
@@ -46,7 +47,7 @@ export function CopyPeriodsDialog({ source, vehicles, onClose, onDone }: { sourc
       const res = await fetch("/api/admin/vehicles/pricing", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "copy", vehicleId: source._id, targetIds: [...selected], priceMode, includeMinRentalDays: withMin }),
+        body: JSON.stringify({ action: "copy", vehicleId: source._id, targetIds: [...selected], priceMode, includeMinRentalDays: withMin, includeDurationDiscounts: withTiers }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok || !d.success) throw new Error(d.error || "Copie impossible");
@@ -64,17 +65,17 @@ export function CopyPeriodsDialog({ source, vehicles, onClose, onDone }: { sourc
       open
       wide
       onClose={onClose}
-      title={`Copier les périodes de ${source.brand} ${source.model}`}
+      title={`Copier les tarifs de ${source.brand} ${source.model}`}
       footer={
         <>
           <button type="button" onClick={onClose} className={`${btn.base} ${btn.secondary}`}>Annuler</button>
-          <button type="button" onClick={run} disabled={busy || !periods.length} className={`${btn.base} ${btn.primary}`}>
+          <button type="button" onClick={run} disabled={busy} className={`${btn.base} ${btn.primary}`}>
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />} Copier vers {selected.size} modèle(s)
           </button>
         </>
       }
     >
-      {!periods.length && <p className="font-semibold text-amber-600">Ce modèle n&apos;a aucune période à copier : ajoutez-en et enregistrez d&apos;abord.</p>}
+      {!periods.length && <p className="font-semibold text-amber-600">Ce modèle n&apos;a aucune période : les modèles choisis n&apos;en auront plus (le tarif dégressif et la durée minimale restent copiables).</p>}
       <ul className="space-y-1 text-slate-600 dark:text-slate-300">
         {periods.map((p, i) => (
           <li key={i}>• <b>{p.name}</b> {describePeriod(p)} — {p.dailyRate} TND/j{p.minDays ? `, ${p.minDays} j min.` : ""}</li>
@@ -108,6 +109,10 @@ export function CopyPeriodsDialog({ source, vehicles, onClose, onDone }: { sourc
       </fieldset>
       <label className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-200">
         <input type="checkbox" checked={withMin} onChange={(e) => setWithMin(e.target.checked)} /> Copier aussi la durée minimale du modèle ({source.minRentalDays || 1} j)
+      </label>
+      <label className="flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-200">
+        <input type="checkbox" checked={withTiers} onChange={(e) => setWithTiers(e.target.checked)} /> Copier aussi le tarif dégressif
+        ({(source.pricing.durationDiscounts || []).map((t) => `${t.minDays} j : −${t.percent} %`).join(", ") || "aucun palier"})
       </label>
       <div>
         <div className="flex flex-wrap items-center justify-between gap-2">

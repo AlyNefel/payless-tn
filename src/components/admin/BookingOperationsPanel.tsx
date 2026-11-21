@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ChangeVehicleDialog } from "@/components/admin/ChangeVehicleDialog";
 import { usePermissions } from "@/components/admin/ui/usePermissions";
 import {
@@ -84,7 +84,10 @@ export function BookingOperationsPanel(props: Props) {
   // Only roles allowed to edit prices may set a custom daily price for extra days.
   const { can, loaded: permsLoaded } = usePermissions();
   const canPrice = permsLoaded && can("pricing.edit");
-  const [dailyRate, setDailyRate] = useState(String(props.models[0]?.baseDailyTND ?? ""));
+  // Empty = rate of the period of the added days (computed by the server). Only pricing.edit can force a price.
+  const [dailyRate, setDailyRate] = useState("");
+  const [preview, setPreview] = useState<{ amount: number; dailyRate: number; newTotal: number } | null>(null);
+  const [previewError, setPreviewError] = useState("");
 
   const status = props.bookingStatus;
   const canPickup = ["pending", "confirmed", "awaiting_payment", "paid"].includes(status);
@@ -97,6 +100,38 @@ export function BookingOperationsPanel(props: Props) {
     const b = new Date(newReturnDate).getTime();
     return Math.round((b - a) / 86_400_000);
   }, [newReturnDate, props.returnDate]);
+
+  // Exact amount from the server (same rules as the confirmation), refreshed as the date changes.
+  useEffect(() => {
+    if (modal !== "extend") return;
+    let alive = true;
+    const t = setTimeout(async () => {
+      const res = await fetch(`/api/admin/bookings/${props.bookingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "change_return",
+          newReturnDate,
+          newReturnTime: newReturnTime || undefined,
+          dailyRateTND: canPrice && dailyRate !== "" ? Number(dailyRate) : undefined,
+          dryRun: true,
+        }),
+      }).catch(() => null);
+      const d = res ? await res.json().catch(() => ({})) : {};
+      if (!alive) return;
+      if (res?.ok && d.quote) {
+        setPreview(d.quote);
+        setPreviewError("");
+      } else {
+        setPreview(null);
+        setPreviewError(d.error || "");
+      }
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [modal, newReturnDate, newReturnTime, dailyRate, canPrice, props.bookingId]);
 
   const call = async (key: string, body: Record<string, unknown>, okText: string) => {
     setBusy(key);
@@ -374,16 +409,22 @@ export function BookingOperationsPanel(props: Props) {
                   </label>
                 </div>
                 <label className="block space-y-1">
-                  <span className="font-semibold text-slate-700 dark:text-slate-300">Prix journalier appliqué (prix de base, DT)</span>
-                  <input type="number" min={0} step="0.001" className={`${input} disabled:opacity-60`} value={dailyRate} disabled={!canPrice} onChange={(e) => setDailyRate(e.target.value)} />
-                  {!canPrice && <span className="block text-[11px] text-slate-500">Tarif standard — votre rôle ne permet pas de modifier le prix.</span>}
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">Prix par jour ajouté (DT)</span>
+                  <input type="number" min={0} step="0.001" className={`${input} disabled:opacity-60`} value={dailyRate} placeholder="Tarif de la période (automatique)" disabled={!canPrice || extraDays <= 0} onChange={(e) => setDailyRate(e.target.value)} />
+                  <span className="block text-[11px] text-slate-500">
+                    {canPrice ? "Laissez vide pour appliquer le tarif de la période des jours ajoutés (et le tarif dégressif du modèle)." : "Tarif de la période — votre rôle ne permet pas de modifier le prix."}
+                  </span>
                 </label>
                 <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 font-semibold">
-                  {extraDays > 0
-                    ? `Prolongation : ${extraDays} jour(s) × ${Number(dailyRate || 0).toFixed(3)} DT = ${(extraDays * Number(dailyRate || 0)).toFixed(3)} DT`
-                    : extraDays < 0
-                    ? `Réduction de ${-extraDays} jour(s) : le montant sera recalculé au prix moyen de la réservation.`
-                    : "Même date : seule l'heure peut changer."}
+                  {previewError
+                    ? previewError
+                    : extraDays === 0
+                    ? "Même date : seule l'heure peut changer."
+                    : !preview
+                    ? "Calcul du montant…"
+                    : extraDays > 0
+                    ? `Prolongation : ${extraDays} jour(s) × ${(preview.dailyRate / 100).toFixed(3)} DT${preview.amount !== preview.dailyRate * extraDays ? " + contribution fiscale et options par jour" : ""} = +${(preview.amount / 100).toFixed(3)} DT · nouveau total ${(preview.newTotal / 100).toFixed(3)} DT`
+                    : `Réduction de ${-extraDays} jour(s) : −${(Math.abs(preview.amount) / 100).toFixed(3)} DT · nouveau total ${(preview.newTotal / 100).toFixed(3)} DT`}
                   <span className="block font-normal text-[11px] opacity-80">
                     Une prolongation n&apos;est acceptée que si ce même véhicule est libre sur les jours ajoutés.
                   </span>

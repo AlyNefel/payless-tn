@@ -371,7 +371,7 @@ function BookingContent() {
       ? {
           ...v,
           minRentalDays: Math.max(Number(v.minRentalDays || 1), liveRules.minRentalDaysGlobal),
-          pricing: { ...(v.pricing || {}), globalSeasons: liveRules.seasons, durationDiscounts: liveRules.durationDiscounts },
+          pricing: { ...(v.pricing || {}), globalSeasons: liveRules.seasons },
         }
       : v;
   const stepOneMinDays = data.pickupDate ? minDaysOn(data.pickupDate) : 1;

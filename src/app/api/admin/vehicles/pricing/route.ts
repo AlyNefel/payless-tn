@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { migrateGlobalPricingToModels } from "@/lib/rentalRules";
+import { migrateGlobalPricingToModels, normalizeDiscounts } from "@/lib/rentalRules";
 import mongoose from "mongoose";
 import { z } from "zod";
 import { connectDB } from "@/lib/db";
@@ -78,6 +78,7 @@ export async function GET() {
           status: v.status || "available",
           minRentalDays: v.minRentalDays || v.pricing?.minRentalDays || 1,
           pricing: {
+            durationDiscounts: (v.pricing?.durationDiscounts || []).map((t) => ({ minDays: t.minDays, percent: t.percent })),
             daily: toTND(v.pricing?.daily, cents),
             deposit: toTND(v.pricing?.deposit, cents),
             seasonalPrices: (v.pricing?.seasonalPrices || []).map((s) => ({
@@ -103,6 +104,8 @@ const saveSchema = z.object({
   dailyRate: z.number().positive("Le tarif standard doit être supérieur à 0.").optional(),
   minRentalDays: z.number().int().min(1).max(365).optional(),
   seasonalPrices: z.array(periodSchema).max(24).optional(),
+  /** Degressive tariff of the model (validated: increasing durations, never a smaller discount). */
+  durationDiscounts: z.array(z.object({ minDays: z.number(), percent: z.number() })).max(10).optional(),
 });
 
 const copySchema = z.object({
@@ -112,6 +115,7 @@ const copySchema = z.object({
   /** "percent": each model keeps the same % above/below its own standard price. "same": same price in TND. */
   priceMode: z.enum(["percent", "same"]).default("percent"),
   includeMinRentalDays: z.boolean().default(true),
+  includeDurationDiscounts: z.boolean().default(true),
 });
 
 function validationError(issues: z.ZodIssue[]) {
@@ -154,6 +158,9 @@ export async function PUT(request: NextRequest) {
               Math.max(100, Math.round(((Number(s.dailyRate) / srcBase) * base) / 100) * 100);
         return { name: s.name, startDate: s.startDate, endDate: s.endDate, startMonth: s.startMonth, endMonth: s.endMonth, dailyRate: rate, discountPercent: s.discountPercent || 0, minDays: s.minDays || 0 };
       }) as never;
+      if (d.includeDurationDiscounts) {
+        t.pricing.durationDiscounts = (source.pricing?.durationDiscounts || []).map((x) => ({ minDays: x.minDays, percent: x.percent })) as never;
+      }
       if (d.includeMinRentalDays) {
         t.minRentalDays = source.minRentalDays || 1;
         t.pricing.minRentalDays = source.minRentalDays || 1;
@@ -178,6 +185,7 @@ export async function PUT(request: NextRequest) {
     daily: vehicle.pricing?.daily,
     minRentalDays: vehicle.minRentalDays,
     periods: (vehicle.pricing?.seasonalPrices || []).map((s) => `${s.name} ${s.startDate || s.startMonth}→${s.endDate || s.endMonth} ${s.dailyRate} min ${s.minDays || 0}`),
+    degressive: (vehicle.pricing?.durationDiscounts || []).map((t) => `${t.minDays}j+ -${t.percent}%`),
   };
 
   if (d.seasonalPrices) {
@@ -195,6 +203,11 @@ export async function PUT(request: NextRequest) {
       minDays: s.minDays || 0,
     })) as never;
   }
+  if (d.durationDiscounts) {
+    const res = normalizeDiscounts(d.durationDiscounts);
+    if (res.error) return NextResponse.json({ success: false, error: res.error }, { status: 400 });
+    vehicle.pricing.durationDiscounts = res.tiers as never;
+  }
   if (d.dailyRate !== undefined) vehicle.pricing.daily = fromTND(d.dailyRate, cents);
   if (d.minRentalDays !== undefined) {
     vehicle.minRentalDays = d.minRentalDays;
@@ -208,6 +221,7 @@ export async function PUT(request: NextRequest) {
       daily: vehicle.pricing.daily,
       minRentalDays: vehicle.minRentalDays,
       periods: (vehicle.pricing.seasonalPrices || []).map((s) => `${s.name} ${s.startDate}→${s.endDate} ${s.dailyRate} min ${s.minDays || 0}`),
+      degressive: (vehicle.pricing.durationDiscounts || []).map((t) => `${t.minDays}j+ -${t.percent}%`),
     },
   });
   return NextResponse.json({ success: true, message: "Tarifs mis à jour avec succès" });
