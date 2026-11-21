@@ -1,4 +1,4 @@
-// Fleet-wide pricing rules: live on every step; PDF upload; same-day turnover alert.
+// Prices by period and minimum per model, live on every step; PDF upload; same-day turnover alert.
 const B = process.env.TEST_URL || "http://localhost:3456";
 function session() {
   let c = {};
@@ -18,29 +18,49 @@ const tag = Date.now().toString(36);
 const locs = (await pub("/api/locations")).locations;
 const P = "2028-07-10", R3 = "2028-07-13", R7 = "2028-07-17";   // inside the season
 const OP = "2028-10-10", OR = "2028-10-13";                      // outside
-await A.req("/api/admin/rental-rules", "PUT", { seasons: [], minRentalDaysGlobal: 1 });
-
+// Prices by period and minimum durations are set PER MODEL (no fleet-wide rule).
 let list = (await pub(`/api/vehicles?pickupDate=${P}&returnDate=${R3}&limit=50`)).vehicles;
 const car = list.find((v) => !(v.pricing.seasonalPrices || []).length && v.availableUnits >= 3);
+// A model with a different standard price, so "same %" and "same price" give different results.
+const other = list.find((v) => v._id !== car._id && v.pricing.daily !== car.pricing.daily && !(v.pricing.seasonalPrices || []).length);
 const base = car.pricing.daily;
+const baseTND = base / 100;
 log("before: list shows the base rate", car.periodPricing.dailyRate === base && car.periodPricing.total === base * 3, `${base}`);
 
-let r = await A.req("/api/admin/rental-rules", "PUT", { seasons: [{ name: "Haute saison", startDate: "2028-07-01", endDate: "2028-08-31", recurring: true, adjustPercent: 20, minDays: 5, active: true }] });
-log("admin saves a fleet-wide period", r.s === 200 && r.j.seasons.length === 1, r.j.error || "");
-const expected = Math.round((base * 1.2) / 100) * 100;
+let r = await A.req("/api/admin/rental-rules", "PUT", { minRentalDaysGlobal: 3 });
+log("fleet-wide minimum no longer accepted (per model now)", r.s === 410, r.j.error);
+r = await A.req("/api/admin/rental-rules", "PUT", { seasons: [] });
+log("fleet-wide periods no longer accepted", r.s === 410);
 
-const rules = await pub("/api/rental-rules");
-log("step 1 (date picker) reads the rule at once, no cache", rules.seasons?.[0]?.minDays === 5 && rules.seasons[0].adjustPercent === 20);
+const period = (extra = {}) => ({ name: "Haute saison", startDate: "07-01", endDate: "08-31", dailyRate: Math.round(baseTND * 1.2), discountPercent: 0, minDays: 5, ...extra });
+const save = (periods, more = {}) => A.req("/api/admin/vehicles/pricing", "PUT", { vehicleId: car._id, seasonalPrices: periods, ...more });
+r = await save([period({ endDate: "06-31" })]);
+log("impossible day (31 June) refused", r.s === 400, r.j.error);
+r = await save([period({ startDate: "2028-08-01", endDate: "2028-07-01" })]);
+log("fixed dates: end before start refused", r.s === 400, r.j.error);
+r = await save([period(), period({ name: "Août", startDate: "08-15", endDate: "09-15" })]);
+log("overlapping periods of one model refused", r.s === 400 && /chevauchent/.test(r.j.error || ""), r.j.error);
+r = await save([period(), period({ name: "Fixe", startDate: "2028-08-20", endDate: "2028-08-25" })]);
+log("a fixed-date period inside a yearly one refused", r.s === 400, r.j.error);
+r = await save([period(), period({ name: "Hiver", startDate: "11-15", endDate: "03-15", dailyRate: Math.round(baseTND * 0.8), minDays: 0 })]);
+log("model saves its own periods (day precision, over New Year)", r.s === 200, r.j.error || "");
+const expected = Math.round(baseTND * 1.2) * 100;
+
 list = (await pub(`/api/vehicles?pickupDate=${P}&returnDate=${R3}&limit=50`)).vehicles;
 let c2 = list.find((v) => v._id === car._id);
-log("list: +20 % applied to the car immediately", c2.periodPricing.dailyRate === expected, `${base} → ${c2.periodPricing.dailyRate}`);
-log("list: every car without own season is adjusted", list.filter((v) => !(v.pricing.seasonalPrices || []).length).every((v) => v.periodPricing.dailyRate === Math.round((v.pricing.daily * 1.2) / 100) * 100));
-log("list: 3 days flagged below the 5-day minimum", c2.periodPricing.meetsMinimum === false && c2.periodPricing.minDays === 5);
+log("list: period price applied immediately", c2.periodPricing.dailyRate === expected, `${base} → ${c2.periodPricing.dailyRate}`);
+const o2 = list.find((v) => v._id === other._id);
+log("other models are NOT affected", o2.periodPricing.dailyRate === other.pricing.daily && o2.periodPricing.meetsMinimum === true);
+log("list: 3 days flagged below the period's 5-day minimum", c2.periodPricing.meetsMinimum === false && c2.periodPricing.minDays === 5);
 const out = (await pub(`/api/vehicles?pickupDate=${OP}&returnDate=${OR}&limit=50`)).vehicles.find((v) => v._id === car._id);
-log("outside the period: base rate, no minimum", out.periodPricing.dailyRate === base && out.periodPricing.meetsMinimum === true);
-const det = (await pub(`/api/vehicles/${car._id}?pickupDate=${P}&returnDate=${R7}`));
+log("outside the periods: base rate, model minimum", out.periodPricing.dailyRate === base && out.periodPricing.meetsMinimum === true);
+const winter = (await pub(`/api/vehicles?pickupDate=2029-01-10&returnDate=2029-01-13&limit=50`)).vehicles.find((v) => v._id === car._id);
+log("period across New Year (15 Nov → 15 Mar) applies in January", winter.periodPricing.dailyRate === Math.round(baseTND * 0.8) * 100);
+const edge = (await pub(`/api/vehicles?pickupDate=2029-03-16&returnDate=2029-03-19&limit=50`)).vehicles.find((v) => v._id === car._id);
+log("day after the period: base rate again", edge.periodPricing.dailyRate === base);
+const det = await pub(`/api/vehicles/${car._id}?pickupDate=${P}&returnDate=${R7}`);
 const dv = det.vehicle || det.data || det;
-log("detail page payload carries the period", (dv.pricing?.globalSeasons || []).length === 1 && dv.minRentalDaysForPeriod === 5);
+log("detail page payload carries the period minimum", dv.minRentalDaysForPeriod === 5);
 
 const mk = async (p, q, extra = {}) => { const res = await fetch(B + "/api/bookings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vehicleId: car._id, vehicles: [{ vehicleId: car._id, extras: [] }], pickupLocationId: locs[0]._id, returnLocationId: locs[0]._id, pickupDate: p, returnDate: q, pickupTime: "10:00", returnTime: "10:00", customer: { firstName: "Pr", lastName: tag, email: `pr_${tag}_${Math.random().toString(36).slice(2, 7)}@ex.com`, phone: "+21624000111", country: "Tunisie", preferredLanguage: "fr", drivingLicenceYear: 2015, licenceIssueYear: 2015, dateOfBirth: "1990-01-01" }, customerLanguage: "fr", accountOption: "guest", acceptTerms: true, ...extra }) }); return { s: res.status, j: await res.json() }; };
 r = await mk(P, R3);
@@ -52,24 +72,23 @@ const sub = full?.pricingBreakdown?.subtotal ?? full?.pricingBreakdown?.vehicleS
 log("booking API bills the period rate × 7 days", r.s < 300 && sub === expected * 7, `subtotal=${sub} expected=${expected * 7}`);
 r = await mk(OP, OR);
 log("booking outside the period accepted at base rate", r.s < 300);
+r = await save([period()], { minRentalDays: 4 });
+r = await mk(OP, OR);
+log("model minimum (4 days) applies outside the periods", r.s === 400 && /4 jour/.test(r.j.error || ""), r.j.error);
 
-// per-vehicle seasonal price wins
-const own = list.find((v) => (v.pricing.seasonalPrices || []).length);
-if (own) log("a car's own seasonal price is not overridden", true, "(car with own season present)");
-r = await A.req("/api/admin/rental-rules", "PUT", { seasons: [{ name: "x", startDate: "2028-08-01", endDate: "2028-07-01", adjustPercent: 10 }] });
-log("invalid period (end before start) refused", r.s === 400, r.j.error);
-r = await A.req("/api/admin/rental-rules", "PUT", { seasons: [{ name: "x", startDate: "2028-07-01", endDate: "2028-08-01", adjustPercent: 900 }] });
-log("absurd adjustment refused", r.s === 400, r.j.error);
-r = await (await fetch(B + "/api/admin/rental-rules", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ seasons: [] }) }));
-log("anonymous visitor cannot change the rules", r.status === 401 || r.status === 403, `status=${r.status}`);
-// deactivate → back to base at once
-await A.req("/api/admin/rental-rules", "PUT", { seasons: [{ name: "Haute saison", startDate: "2028-07-01", endDate: "2028-08-31", recurring: true, adjustPercent: 20, minDays: 5, active: false }] });
+// Copy to other models
+r = await A.req("/api/admin/vehicles/pricing", "PUT", { action: "copy", vehicleId: car._id, targetIds: [other._id], priceMode: "percent", includeMinRentalDays: true });
+log("periods copied to another model", r.s === 200 && r.j.updated === 1, r.j.error || "");
+const copied = (await pub(`/api/vehicles?pickupDate=${P}&returnDate=${R7}&limit=50`)).vehicles.find((v) => v._id === other._id);
+const otherExpected = Math.max(100, Math.round(((expected / base) * other.pricing.daily) / 100) * 100);
+log("copied period keeps the same % on the other model's own price", copied.periodPricing.dailyRate === otherExpected && copied.periodPricing.minDays === 5, `${other.pricing.daily} → ${copied.periodPricing.dailyRate} (expected ${otherExpected})`);
+r = await (await fetch(B + "/api/admin/vehicles/pricing", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ vehicleId: car._id, seasonalPrices: [] }) }));
+log("anonymous visitor cannot change prices", r.status === 401 || r.status === 403, `status=${r.status}`);
+// Back to normal for the next tests.
+await save([], { minRentalDays: 1 });
+await A.req("/api/admin/vehicles/pricing", "PUT", { vehicleId: other._id, seasonalPrices: [], minRentalDays: 1 });
 c2 = (await pub(`/api/vehicles?pickupDate=${P}&returnDate=${R3}&limit=50`)).vehicles.find((v) => v._id === car._id);
-log("period switched off: base rate back immediately", c2.periodPricing.dailyRate === base && c2.periodPricing.meetsMinimum === true);
-// global minimum
-await A.req("/api/admin/rental-rules", "PUT", { minRentalDaysGlobal: 4 });
-log("global minimum reaches step 1 at once", (await pub("/api/rental-rules")).minRentalDaysGlobal === 4);
-await A.req("/api/admin/rental-rules", "PUT", { minRentalDaysGlobal: 1, seasons: [] });
+log("periods removed: base rate back immediately", c2.periodPricing.dailyRate === base && c2.periodPricing.meetsMinimum === true);
 
 // ── PDF upload ──
 const pdf = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");

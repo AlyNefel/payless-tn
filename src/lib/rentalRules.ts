@@ -1,6 +1,6 @@
 import connectDB from "./db";
 import AgencySetting from "@/models/AgencySetting";
-import { matchGlobalSeason, type DurationDiscount, type GlobalSeason } from "./seasonalPricing";
+import { minDaysFor, type DurationDiscount, type GlobalSeason } from "./seasonalPricing";
 
 export interface RentalRules {
   minRentalDaysGlobal: number;
@@ -103,9 +103,72 @@ export async function setGlobalSeasons(seasons: GlobalSeason[], userId?: string)
 }
 
 /** Every fleet-wide rule, read from the database on each call (no cache: changes are live). */
+/**
+ * Prices by period and minimum durations are set PER MODEL. The fleet-wide minimum and periods of
+ * earlier versions are copied once into every model (so nothing changes for customers), then
+ * switched off. Idempotent; runs on the first price calculation after deploying.
+ */
+let migration: Promise<void> | null = null;
+export function migrateGlobalPricingToModels(): Promise<void> {
+  if (!migration) {
+    migration = (async () => {
+      await connectDB();
+      const done = await AgencySetting.findOne({ key: "pricingPerModelVersion" }).lean();
+      if (done) return;
+      const [globalMin, seasons] = await Promise.all([getGlobalMinRentalDays(), getGlobalSeasons()]);
+      const active = seasons.filter((x) => x.active !== false);
+      const { default: Vehicle } = await import("@/models/Vehicle");
+      const report: string[] = [];
+      if (globalMin > 1 || active.length) {
+        for (const v of await Vehicle.find({})) {
+          const changes: string[] = [];
+          if (globalMin > 1 && (v.minRentalDays || 1) < globalMin) {
+            v.minRentalDays = globalMin;
+            v.pricing.minRentalDays = globalMin;
+            changes.push(`min ${globalMin} j`);
+          }
+          const base = Number(v.pricing?.daily || 0);
+          for (const g of active) {
+            const unit = base >= 1000 ? 100 : 1;
+            v.pricing.seasonalPrices = [
+              ...(v.pricing.seasonalPrices || []),
+              {
+                name: g.name,
+                startDate: g.recurring ? g.startDate.slice(5, 10) : g.startDate.slice(0, 10),
+                endDate: g.recurring ? g.endDate.slice(5, 10) : g.endDate.slice(0, 10),
+                dailyRate: Math.max(unit, Math.round((base * (1 + (g.adjustPercent || 0) / 100)) / unit) * unit),
+                discountPercent: 0,
+                minDays: g.minDays || 0,
+              },
+            ] as never;
+            changes.push(`période ${g.name}`);
+          }
+          if (changes.length) {
+            v.markModified("pricing");
+            await v.save();
+            report.push(`${v.brand} ${v.model}: ${changes.join(", ")}`);
+          }
+        }
+      }
+      await setGlobalMinRentalDays(1);
+      await setGlobalSeasons([]);
+      await AgencySetting.updateOne(
+        { key: "pricingPerModelVersion" },
+        { $set: { value: { version: 1, at: new Date(), report }, group: "system", label: "Tarifs par modèle (migration)", type: "json" } },
+        { upsert: true }
+      );
+    })().catch((err) => {
+      migration = null;
+      console.error("migrateGlobalPricingToModels failed:", err);
+    });
+  }
+  return migration;
+}
+
 export async function getRentalRules(): Promise<RentalRules> {
-  const [minRentalDaysGlobal, seasons, durationDiscounts] = await Promise.all([getGlobalMinRentalDays(), getGlobalSeasons(), getDurationDiscounts()]);
-  return { minRentalDaysGlobal, seasons: seasons.filter((s) => s.active !== false), durationDiscounts };
+  await migrateGlobalPricingToModels();
+  // Period prices and minimum durations live on each model; only the degressive tariff is fleet-wide.
+  return { minRentalDaysGlobal: 1, seasons: [], durationDiscounts: await getDurationDiscounts() };
 }
 
 /**
@@ -114,8 +177,8 @@ export async function getRentalRules(): Promise<RentalRules> {
  */
 export function applyRules<T extends { minRentalDays?: number; pricing?: any }>(vehicle: T, rules: RentalRules, pickupDate?: string): T {
   const base = effectiveMinDays(vehicle, rules.minRentalDaysGlobal);
-  const season = pickupDate ? matchGlobalSeason(pickupDate, rules.seasons) : null;
-  const min = Math.max(base, Number(season?.minDays || 0));
+  // The model's own minimum, raised by the minimum of its period on the pickup day.
+  const min = pickupDate ? minDaysFor({ ...vehicle, minRentalDays: base }, pickupDate) : base;
   return {
     ...vehicle,
     minRentalDays: base,

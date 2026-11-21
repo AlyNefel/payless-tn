@@ -102,9 +102,10 @@ for (const f of files) {
   const fails = lines.filter((l) => l.startsWith("FAIL"));
   const passes = lines.filter((l) => l.startsWith("PASS")).length;
   // Quiet on success, full detail on failure.
-  if (out.code !== 0 || fails.length || passes === 0 || process.env.VERBOSE) {
+  if (process.env.VERBOSE) console.log(out.text.trim());
+  if (out.code !== 0 || fails.length || passes === 0) {
     failedFiles++;
-    console.log(out.text.trim());
+    if (!process.env.VERBOSE) console.log(out.text.trim());
     console.log(`✗ ${f}: ${fails.length} failed, ${passes} passed${out.code ? ` (exit ${out.code})` : ""}`);
   } else {
     console.log(`✓ ${passes} checks passed`);

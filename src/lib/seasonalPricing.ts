@@ -8,6 +8,8 @@ export interface SeasonalPriceRule {
   endMonth?: number;   // 1 to 12 (5 = May, etc.)
   dailyRate: number;   // in millimes/cents (or DT if stored normalized)
   discountPercent?: number; // discount applied during this period (0-100)
+  /** Minimum rental days for a rental starting in this period (0 = the model's minimum). */
+  minDays?: number;
 }
 
 /**
@@ -107,8 +109,46 @@ export function matchGlobalSeason(date: Date | string | undefined, seasons: Glob
  */
 export function minDaysFor(vehicle: any, pickupDate?: Date | string): number {
   const own = Number(vehicle?.minRentalDays || vehicle?.pricing?.minRentalDays || 1) || 1;
-  const season = matchGlobalSeason(pickupDate, vehicle?.pricing?.globalSeasons);
-  return Math.max(1, own, Number(season?.minDays || 0));
+  // The model's own period (the one that sets the price) can require more days.
+  const seasons: SeasonalPriceRule[] = vehicle?.pricing?.seasonalPrices || [];
+  const period = pickupDate ? seasons.find((s) => isDateInSeason(dayKey(pickupDate), s)) : undefined;
+  const legacy = matchGlobalSeason(pickupDate, vehicle?.pricing?.globalSeasons);
+  return Math.max(1, own, Number(period?.minDays || 0), Number(legacy?.minDays || 0));
+}
+
+/** Calendar days ("MM-DD" for a yearly period, "YYYY-MM-DD" for fixed dates) covered by a rule. */
+function ruleDays(rule: SeasonalPriceRule): { yearly: Set<string>; fixed: Set<string> } {
+  const yearly = new Set<string>();
+  const fixed = new Set<string>();
+  const md = (d: Date) => d.toISOString().slice(5, 10);
+  if (rule.startDate && rule.endDate && rule.startDate.length >= 10 && rule.endDate.length >= 10) {
+    for (let t = Date.parse(`${rule.startDate.slice(0, 10)}T00:00:00Z`), end = Date.parse(`${rule.endDate.slice(0, 10)}T00:00:00Z`), n = 0; t <= end && n < 800; t += 86_400_000, n++) {
+      fixed.add(new Date(t).toISOString().slice(0, 10));
+    }
+    return { yearly, fixed };
+  }
+  // Leap year: every MM-DD exists.
+  for (let t = Date.UTC(2028, 0, 1); t < Date.UTC(2029, 0, 1); t += 86_400_000) {
+    if (isDateInSeason(new Date(t), rule)) yearly.add(md(new Date(t)));
+  }
+  return { yearly, fixed };
+}
+
+/** Pairs of periods of one model that cover the same day (the first one would silently win). */
+export function overlappingPeriods(rules: SeasonalPriceRule[]): [number, number][] {
+  const days = rules.map(ruleDays);
+  const out: [number, number][] = [];
+  for (let i = 0; i < rules.length; i++)
+    for (let j = i + 1; j < rules.length; j++) {
+      const a = days[i];
+      const b = days[j];
+      const clash =
+        [...a.yearly].some((d) => b.yearly.has(d)) ||
+        [...a.fixed].some((d) => b.fixed.has(d) || b.yearly.has(d.slice(5))) ||
+        [...b.fixed].some((d) => a.yearly.has(d.slice(5)));
+      if (clash) out.push([i, j]);
+    }
+  return out;
 }
 
 /** Per-vehicle rule or fleet-wide period that sets the price on this day (for display). */

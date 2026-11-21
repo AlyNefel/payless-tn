@@ -4,7 +4,7 @@ import { admin, book, check, finish, fixtures, pub, session, tag } from "./lib.m
 const A = await admin();
 const P = "2031-03-02", R3 = "2031-03-05", R10 = "2031-03-12";
 const { car, locationId } = await fixtures(P, R10);
-await A.req("/api/admin/rental-rules", "PUT", { seasons: [], durationDiscounts: [], minRentalDaysGlobal: 1 });
+await A.req("/api/admin/rental-rules", "PUT", { durationDiscounts: [] });
 const base = car.pricing.daily;
 
 // ── Degressive tariff ──
@@ -26,18 +26,23 @@ const full = (await A.req(`/api/admin/bookings/${row._id}`)).j.booking;
 check("booking API bills the discounted rate", b.s < 300 && full.pricingBreakdown.subtotal === expected * 10, `subtotal=${full.pricingBreakdown.subtotal}`);
 
 // ── Price filter / sort on the period price ──
-await A.req("/api/admin/rental-rules", "PUT", { durationDiscounts: [], seasons: [{ name: "Test haute", startDate: "2031-06-01", endDate: "2031-06-30", adjustPercent: 50, active: true }] });
+await A.req("/api/admin/rental-rules", "PUT", { durationDiscounts: [] });
 const S = "2031-06-10", E = "2031-06-13";
+// The cheapest model gets a June period at +50 %: its period price must drive filter and sort.
+const pre = (await pub(`/api/vehicles?pickupDate=${S}&returnDate=${E}&limit=100`)).vehicles.filter((x) => !(x.pricing.seasonalPrices || []).length);
+const cheap = pre.sort((x, y) => x.pricing.daily - y.pricing.daily)[0];
+r = await A.req("/api/admin/vehicles/pricing", "PUT", { vehicleId: cheap._id, seasonalPrices: [{ name: "Juin", startDate: "2031-06-01", endDate: "2031-06-30", dailyRate: Math.round((cheap.pricing.daily * 1.5) / 100), minDays: 0 }] });
+check("model period saved for the sort test", r.s === 200, r.j.error || "");
 const all = (await pub(`/api/vehicles?pickupDate=${S}&returnDate=${E}&limit=100`)).vehicles;
 const rates = all.map((x) => x.periodPricing.dailyRate);
 check("default sort follows the period price", rates.every((x, i) => i === 0 || x >= rates[i - 1]));
 const desc = (await pub(`/api/vehicles?pickupDate=${S}&returnDate=${E}&limit=100&sort=price_desc`)).vehicles.map((x) => x.periodPricing.dailyRate);
 check("price_desc follows the period price", desc.every((x, i) => i === 0 || x <= desc[i - 1]));
-const cheapBase = all.find((x) => !(x.pricing.seasonalPrices || []).length && x.pricing.daily * 1.5 > x.pricing.daily + 100);
+const cheapBase = all.find((x) => x._id === cheap._id);
 const cap = Math.floor(cheapBase.pricing.daily / 100) + 1; // above the base, below base +50 %
 const filtered = (await pub(`/api/vehicles?pickupDate=${S}&returnDate=${E}&limit=100&maxPrice=${cap}`)).vehicles;
 check("max price filter uses the season price, not the base", !filtered.some((x) => x._id === cheapBase._id) && filtered.every((x) => x.periodPricing.dailyRate <= cap * 100), `cap=${cap} DT`);
-await A.req("/api/admin/rental-rules", "PUT", { seasons: [] });
+await A.req("/api/admin/vehicles/pricing", "PUT", { vehicleId: cheap._id, seasonalPrices: [] });
 
 // ── Reminders ──
 const t = new Date(Date.now() + 3_600_000 + 86_400_000).toISOString().slice(0, 10);

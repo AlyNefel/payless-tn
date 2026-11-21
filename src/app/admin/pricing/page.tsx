@@ -17,21 +17,14 @@ import {
   Info,
   ChevronRight,
   TrendingDown,
+  Copy,
 } from "lucide-react";
 import Image from "next/image";
-import { GlobalMinRentalCard } from "@/components/admin/GlobalMinRentalCard";
-import { GlobalSeasonsCard } from "@/components/admin/GlobalSeasonsCard";
 import { DurationDiscountsCard } from "@/components/admin/DurationDiscountsCard";
+import { PeriodEditor, type PricePeriod } from "@/components/admin/PeriodEditor";
+import { CopyPeriodsDialog } from "@/components/admin/CopyPeriodsDialog";
 
-interface SeasonalPeriod {
-  name: string;
-  startMonth?: number;
-  endMonth?: number;
-  startDate?: string;
-  endDate?: string;
-  dailyRate: number;
-  discountPercent?: number;
-}
+type SeasonalPeriod = PricePeriod;
 
 interface VehiclePricing {
   daily: number;
@@ -47,31 +40,20 @@ interface VehicleItem {
   model: string;
   licensePlate: string;
   category: string;
+  categoryId?: string;
   imageUrl: string;
   status: string;
   minRentalDays?: number;
   pricing: VehiclePricing;
 }
 
-const MONTHS = [
-  { value: 1, label: "01 - Janvier" },
-  { value: 2, label: "02 - Février" },
-  { value: 3, label: "03 - Mars" },
-  { value: 4, label: "04 - Avril" },
-  { value: 5, label: "05 - Mai" },
-  { value: 6, label: "06 - Juin" },
-  { value: 7, label: "07 - Juillet" },
-  { value: 8, label: "08 - Août" },
-  { value: 9, label: "09 - Septembre" },
-  { value: 10, label: "10 - Octobre" },
-  { value: 11, label: "11 - Novembre" },
-  { value: 12, label: "12 - Décembre" },
-];
+
 
 export default function AdminPricingPage() {
   const [vehicles, setVehicles] = useState<VehicleItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [copyFrom, setCopyFrom] = useState<VehicleItem | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ id: string; text: string; type: "success" | "error" } | null>(null);
 
@@ -121,10 +103,11 @@ export default function AdminPricingPage() {
         const currentSeasons = v.pricing.seasonalPrices || [];
         const newSeason: SeasonalPeriod = {
           name: `Période ${currentSeasons.length + 1}`,
-          startMonth: 11,
-          endMonth: 5,
+          startDate: "07-01",
+          endDate: "08-31",
           dailyRate: v.pricing.daily || 90,
           discountPercent: 0,
+          minDays: 0,
         };
         return {
           ...v,
@@ -132,25 +115,6 @@ export default function AdminPricingPage() {
             ...v.pricing,
             seasonalPrices: [...currentSeasons, newSeason],
           },
-        };
-      })
-    );
-  };
-
-  const handlePeriodChange = (
-    vehicleId: string,
-    index: number,
-    field: keyof SeasonalPeriod,
-    value: any
-  ) => {
-    setVehicles((prev) =>
-      prev.map((v) => {
-        if (v._id !== vehicleId) return v;
-        const updated = [...(v.pricing.seasonalPrices || [])];
-        updated[index] = { ...updated[index], [field]: value };
-        return {
-          ...v,
-          pricing: { ...v.pricing, seasonalPrices: updated },
         };
       })
     );
@@ -236,8 +200,7 @@ export default function AdminPricingPage() {
             Tarifs par Période & Saisons
           </h1>
           <p className="text-sm text-blue-100 max-w-2xl leading-relaxed">
-            Configurez les prix par période pour chaque voiture (ex. Période Mois 11 → Mois 5 à 90 DT)
-            avec réductions appliquées sur la période choisie.
+            Chaque modèle a son tarif standard, sa durée minimale et ses périodes (au jour près, chaque année ou à des dates précises) avec leur propre prix et leur propre durée minimale.
           </p>
         </div>
 
@@ -250,8 +213,6 @@ export default function AdminPricingPage() {
       </div>
 
 
-      <GlobalMinRentalCard />
-      <GlobalSeasonsCard />
       <DurationDiscountsCard />
       {/* Search & Actions Bar */}
       <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
@@ -421,14 +382,24 @@ export default function AdminPricingPage() {
                       </span>
                     </div>
 
+                    <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCopyFrom(vehicle)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-violet-50 dark:hover:bg-violet-900/30 text-violet-600 dark:text-violet-300 font-bold text-xs border border-slate-200 dark:border-slate-700"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copier vers d&apos;autres modèles</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleAddPeriod(vehicle._id)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-bold text-xs border border-slate-200 dark:border-slate-700 transition-colors"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>+ Ajouter Période</span>
+                      <span>Ajouter une période</span>
                     </button>
+                    </div>
                   </div>
 
                   {seasons.length === 0 ? (
@@ -450,151 +421,25 @@ export default function AdminPricingPage() {
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {seasons.map((period, idx) => {
-                        const effective = Math.round(
-                          period.dailyRate * (1 - (period.discountPercent || 0) / 100)
-                        );
-
-                        return (
-                          <div
-                            key={idx}
-                            className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4"
-                          >
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 flex-1">
-                              {/* Period Name */}
-                              <div>
-                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-                                  Nom Période
-                                </label>
-                                <input
-                                  type="text"
-                                  value={period.name}
-                                  onChange={(e) =>
-                                    handlePeriodChange(vehicle._id, idx, "name", e.target.value)
-                                  }
-                                  placeholder="Ex: Basse Saison (Hiver)"
-                                  className="w-full px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                              </div>
-
-                              {/* Start Month */}
-                              <div>
-                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-                                  Du Mois
-                                </label>
-                                <select
-                                  value={period.startMonth || 11}
-                                  onChange={(e) =>
-                                    handlePeriodChange(
-                                      vehicle._id,
-                                      idx,
-                                      "startMonth",
-                                      Number(e.target.value)
-                                    )
-                                  }
-                                  className="w-full px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                  {MONTHS.map((m) => (
-                                    <option key={m.value} value={m.value}>
-                                      {m.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              {/* End Month */}
-                              <div>
-                                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-                                  Au Mois
-                                </label>
-                                <select
-                                  value={period.endMonth || 5}
-                                  onChange={(e) =>
-                                    handlePeriodChange(
-                                      vehicle._id,
-                                      idx,
-                                      "endMonth",
-                                      Number(e.target.value)
-                                    )
-                                  }
-                                  className="w-full px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                  {MONTHS.map((m) => (
-                                    <option key={m.value} value={m.value}>
-                                      {m.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              {/* Daily Rate & Discount */}
-                              <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-                                    Tarif (TND)
-                                  </label>
-                                  <input
-                                    type="number"
-                                    min="1"
-                                    value={period.dailyRate}
-                                    onChange={(e) =>
-                                      handlePeriodChange(
-                                        vehicle._id,
-                                        idx,
-                                        "dailyRate",
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-                                    Remise %
-                                  </label>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max="90"
-                                    value={period.discountPercent || 0}
-                                    onChange={(e) =>
-                                      handlePeriodChange(
-                                        vehicle._id,
-                                        idx,
-                                        "discountPercent",
-                                        Number(e.target.value)
-                                      )
-                                    }
-                                    className="w-full px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                  />
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Effective Rate Badge & Delete Button */}
-                            <div className="flex items-center justify-between lg:justify-end gap-3 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-200 dark:border-slate-800 shrink-0">
-                              <div className="px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-right">
-                                <span className="text-[10px] font-bold uppercase text-amber-700 dark:text-amber-400 block">
-                                  Tarif Effectif
-                                </span>
-                                <span className="text-sm font-black text-amber-600 dark:text-amber-300">
-                                  {effective} TND{" "}
-                                  <span className="text-[10px] font-normal text-slate-500">/ jour</span>
-                                </span>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => handleRemovePeriod(vehicle._id, idx)}
-                                className="p-2 rounded-xl text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
-                                title="Supprimer cette période"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {seasons.map((period, idx) => (
+                        <PeriodEditor
+                          key={idx}
+                          period={period}
+                          baseRate={vehicle.pricing.daily}
+                          baseMinDays={vehicle.minRentalDays || 1}
+                          onChange={(next) =>
+                            setVehicles((prev) =>
+                              prev.map((v) => {
+                                if (v._id !== vehicle._id) return v;
+                                const updated = [...(v.pricing.seasonalPrices || [])];
+                                updated[idx] = next;
+                                return { ...v, pricing: { ...v.pricing, seasonalPrices: updated } };
+                              })
+                            )
+                          }
+                          onRemove={() => handleRemovePeriod(vehicle._id, idx)}
+                        />
+                      ))}
                     </div>
                   )}
                 </div>
@@ -602,6 +447,18 @@ export default function AdminPricingPage() {
             );
           })}
         </div>
+      )}
+      {copyFrom && (
+        <CopyPeriodsDialog
+          source={copyFrom}
+          vehicles={vehicles}
+          onClose={() => setCopyFrom(null)}
+          onDone={(n) => {
+            setCopyFrom(null);
+            setStatusMessage({ id: copyFrom._id, text: `Périodes copiées vers ${n} modèle(s).`, type: "success" });
+            loadVehicles();
+          }}
+        />
       )}
     </div>
   );

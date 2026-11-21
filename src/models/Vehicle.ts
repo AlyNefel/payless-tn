@@ -12,6 +12,8 @@ export interface ISeasonalPrice {
   endMonth?: number;   // 1 to 12
   dailyRate: number;   // in DT or cents
   discountPercent?: number; // optional discount applied during this period
+  /** Minimum rental days for a rental starting in this period (0 = the model's minimum). */
+  minDays?: number;
 }
 
 export type UnitStatus = "active" | "maintenance" | "out_of_service";
@@ -134,6 +136,7 @@ const VehicleSchema = new Schema<IVehicle>(
           endMonth: { type: Number },
           dailyRate: { type: Number, required: true },
           discountPercent: { type: Number, default: 0 },
+          minDays: { type: Number, default: 0, min: 0, max: 365 },
         },
       ],
     },
