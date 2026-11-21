@@ -262,11 +262,13 @@ export async function GET(request: NextRequest) {
       const enriched = {
         ...ruled,
         periodPricing: {
-          // Daily rate in force on the pickup day (or today without dates), minor units.
+          // Average daily rate over the dates (mixed price across periods), or today's rate without dates.
           dailyRate: quote ? quote.averageDailyRate : getVehicleEffectiveDailyRate(ruled, priceDay),
           baseDailyRate: Number(v.pricing?.daily || 0),
           days: quote ? quote.days : null,
           total: quote ? quote.subtotal : null,
+          /** One entry per rate when the dates span several periods (mixed price). */
+          segments: quote && quote.segments.length > 1 ? quote.segments : undefined,
           periodName: pricingPeriodName(ruled, priceDay),
           discountPercent: quote?.discountPercent || 0,
           minDays: ruled.minRentalDaysForPeriod,

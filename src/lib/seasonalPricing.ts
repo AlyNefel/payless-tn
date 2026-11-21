@@ -195,9 +195,8 @@ export function getVehicleEffectiveDailyRate(vehicle: any, dateOrStr?: Date | st
 }
 
 /**
- * Daily rate of a model for days starting on `day`: the period in force that day (the model's own
- * periods), then the model's degressive tariff for a rental of `totalDays` days. Used for the days
- * added by an extension and for the days covered by a new car after a car change.
+ * Daily rate of a model ON `day`: the period in force that day (the model's own periods), then the
+ * model's degressive tariff for a rental of `totalDays` days. Summed day by day by rentalDaysPrice.
  */
 export function rateOn(vehicle: any, day: Date | string, totalDays: number): number {
   let rate = getVehicleEffectiveDailyRate(vehicle, dayKey(day));
@@ -209,35 +208,73 @@ export function rateOn(vehicle: any, day: Date | string, totalDays: number): num
   return rate;
 }
 
+/** "YYYY-MM-DD" + n calendar days. */
+export function addDays(day: string, n: number): string {
+  return new Date(Date.parse(`${dayKey(day)}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Price of the days [fromIndex, toIndex) of a rental starting on `start` (day 0 = pickup day):
+ * EACH day at the rate of the period it falls in (mixed price across two periods), with the
+ * model's degressive tariff for a rental of `totalDays` days.
+ */
+export function rentalDaysPrice(vehicle: any, start: Date | string, fromIndex: number, toIndex: number, totalDays: number): number {
+  const first = dayKey(start);
+  let sum = 0;
+  for (let k = Math.max(0, fromIndex); k < toIndex; k++) sum += rateOn(vehicle, addDays(first, k), totalDays);
+  return sum;
+}
+
+export interface PriceSegment {
+  /** Period name ("" = standard rate). */
+  name: string;
+  /** First and last calendar day billed at this rate (inclusive). */
+  from: string;
+  to: string;
+  days: number;
+  dailyRate: number;
+  amount: number;
+}
+
+/** Consecutive days billed at the same rate, for the price detail ("3 j × 100 + 2 j × 150"). */
+export function priceSegments(vehicle: any, start: Date | string, days: number, totalDays = days): PriceSegment[] {
+  const first = dayKey(start);
+  const out: PriceSegment[] = [];
+  for (let k = 0; k < days; k++) {
+    const day = addDays(first, k);
+    const rate = rateOn(vehicle, day, totalDays);
+    const name = pricingPeriodName(vehicle, day);
+    const last = out[out.length - 1];
+    if (last && last.dailyRate === rate && last.name === name) {
+      last.days += 1;
+      last.to = day;
+      last.amount += rate;
+    } else out.push({ name, from: day, to: day, days: 1, dailyRate: rate, amount: rate });
+  }
+  return out;
+}
+
 /**
  * Computes the total rental subtotal.
  *
- * Price guarantee: the daily rate in force on the PICKUP day is locked for the
- * whole rental. A rental that starts in one pricing period and ends in another
- * (e.g. starts in low season, ends in high season) keeps the first period's
- * price for every day, so the customer is never charged a different rate than
- * the one shown when they booked.
+ * Mixed price: a rental that starts in one pricing period and ends in another is billed day by
+ * day — the days in period 1 at period 1's rate, the days in period 2 at period 2's rate — with
+ * the model's degressive tariff for the full duration. `averageDailyRate` = subtotal / days.
  */
 export function calculateSeasonalRentalTotal(
   vehicle: any,
   pickupDate: string,
   returnDate: string
-): { subtotal: number; averageDailyRate: number; days: number; discountPercent?: number } {
+): { subtotal: number; averageDailyRate: number; days: number; discountPercent?: number; segments: PriceSegment[] } {
   if (!vehicle || !pickupDate || !returnDate) {
-    return { subtotal: 0, averageDailyRate: 0, days: 1 };
+    return { subtotal: 0, averageDailyRate: 0, days: 1, segments: [] };
   }
 
   const start = dayKey(pickupDate);
   const days = computeRentalDays(pickupDate, returnDate);
-
-  let lockedDailyRate = getVehicleEffectiveDailyRate(vehicle, start);
-  // Degressive tariff: longer rentals get a lower daily rate (kept on whole dinars).
   const discountPercent = durationDiscountPercent(days, vehicle.pricing?.durationDiscounts);
-  if (discountPercent > 0 && lockedDailyRate > 0) {
-    const unit = lockedDailyRate >= 1000 ? 100 : 1;
-    lockedDailyRate = Math.max(unit, Math.round((lockedDailyRate * (1 - discountPercent / 100)) / unit) * unit);
-  }
-  const subtotal = lockedDailyRate * days;
+  const segments = priceSegments(vehicle, start, days, days);
+  const subtotal = segments.reduce((a, x) => a + x.amount, 0);
 
-  return { subtotal, averageDailyRate: lockedDailyRate, days, discountPercent };
+  return { subtotal, averageDailyRate: days > 0 ? Math.round(subtotal / days) : 0, days, discountPercent, segments };
 }

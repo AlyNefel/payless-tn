@@ -17,7 +17,7 @@ import { useCompanySettings } from "@/contexts/CompanySettingsContext";
 import { OptionIcon } from "@/components/ui/OptionIcon";
 import { isPerDayPricing } from "@/lib/extras";
 import { VehicleImage, VEHICLE_PLACEHOLDER } from "@/components/ui/VehicleImage";
-import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate, minDaysFor } from "@/lib/seasonalPricing";
+import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate, minDaysFor, type PriceSegment } from "@/lib/seasonalPricing";
 import { useRentalRules } from "@/lib/useRentalRules";
 import {
   getVehicleFeatureLabel,
@@ -83,6 +83,8 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
   const [pickupDate, setPickupDate] = useState("");
   const [returnDate, setReturnDate] = useState("");
   const [rentalDays, setRentalDays] = useState(0);
+  // Mixed price over two periods: one line per rate ("3 jours × 100 TND").
+  const [segments, setSegments] = useState<PriceSegment[]>([]);
   const [totalPrice, setTotalPrice] = useState(0);
   const [options, setOptions] = useState<AvailableOption[]>([]);
   // Fleet-wide rules (pricing periods, minimum duration), live from the back office.
@@ -129,8 +131,9 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
       const ret = new Date(returnDate);
       if (ret > pickup) {
         // Same pricing engine as the booking wizard and the booking API (seasonal daily rates).
-        const { subtotal, days } = calculateSeasonalRentalTotal(withRules(vehicle as any), pickupDate, returnDate);
+        const { subtotal, days, segments: segs } = calculateSeasonalRentalTotal(withRules(vehicle as any), pickupDate, returnDate);
         setRentalDays(days);
+        setSegments(segs);
         setTotalPrice(subtotal);
       }
     }
@@ -592,6 +595,16 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
                           </span>
                           <span className="text-white font-medium">{`${Math.round(totalPrice / 100).toLocaleString("fr-FR")} TND`}</span>
                         </div>
+                        {segments.length > 1 &&
+                          segments.map((s, k) => (
+                            <div key={k} className="flex justify-between text-xs text-white/50 ps-3">
+                              <span>
+                                {s.days} {locale === "fr" ? "j" : locale === "ar" ? "ي" : "d"} × {formatPrice(s.dailyRate)}
+                                {s.name ? ` · ${s.name}` : ""}
+                              </span>
+                              <span>{formatPrice(s.amount)}</span>
+                            </div>
+                          ))}
                         {((vehicle.pricing.deposit ?? vehicle.deposit ?? 0) > 0) && (
                           <div className="flex justify-between text-sm">
                             <span className="text-white/60">
