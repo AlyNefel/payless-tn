@@ -107,6 +107,8 @@ interface Vehicle {
   fuelType: string;
   seats: number;
   availableUnits?: number;
+  /** false = no free car of this model for the selected dates (shown disabled). */
+  isAvailable?: boolean;
   totalUnits?: number;
   minRentalDays?: number;
 }
@@ -262,15 +264,17 @@ function BookingContent() {
       .finally(() => setExtrasLoaded(true));
   }, []);
 
-  async function fetchVehicles() {
-    setLoading(true);
+  async function fetchVehicles(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams({
         pickupDate: data.pickupDate,
         returnDate: data.returnDate,
-        limit: "50",
+        limit: "100",
+        // Sold-out models stay visible, disabled, with "Épuisée à ces dates".
+        includeSoldOut: "1",
       });
-      const res = await fetch(`/api/vehicles?${params}`);
+      const res = await fetch(`/api/vehicles?${params}`, { cache: "no-store" });
       const json = await res.json();
       setVehicles(json.vehicles || []);
     } catch (err) {
@@ -284,6 +288,19 @@ function BookingContent() {
 
   // Cart vehicles (incl. one preselected from a vehicle page) whose stock is exhausted for the dates.
   const [unavailableIds, setUnavailableIds] = useState<string[]>([]);
+  // Availability is re-checked when the customer comes back to the tab and every minute.
+  const [stockTick, setStockTick] = useState(0);
+  useEffect(() => {
+    const again = () => document.visibilityState === "visible" && setStockTick((t) => t + 1);
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    const timer = window.setInterval(again, 60_000);
+    return () => {
+      window.removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", again);
+      window.clearInterval(timer);
+    };
+  }, []);
   const cartKey = cart.map((c) => c.vehicle._id).join(",");
   useEffect(() => {
     if (!cartKey || !data.pickupDate || !data.returnDate) {
@@ -299,7 +316,7 @@ function BookingContent() {
     Promise.all(
       Object.entries(counts).map(async ([id, needed]) => {
         try {
-          const res = await fetch(`/api/vehicles/${id}?${q.toString()}`);
+          const res = await fetch(`/api/vehicles/${id}?${q.toString()}`, { cache: "no-store" });
           if (!res.ok) return id;
           const json = await res.json();
           const available = Number(json.vehicle?.availableUnits ?? 0);
@@ -315,7 +332,7 @@ function BookingContent() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cartKey, data.pickupDate, data.returnDate]);
+  }, [cartKey, data.pickupDate, data.returnDate, stockTick]);
   const [customPickupAddress, setCustomPickupAddress] = useState("");
   const [customReturnAddress, setCustomReturnAddress] = useState("");
 
@@ -356,6 +373,11 @@ function BookingContent() {
       fetchVehicles();
     }
   }, [step, data.pickupDate, data.returnDate]);
+  // Silent refresh of the list (no skeleton) on the same schedule.
+  useEffect(() => {
+    if (stockTick > 0 && step === 2 && data.pickupDate && data.returnDate) fetchVehicles(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stockTick]);
 
   // Same rule as the server invoice (lib/extras.computeRentalDays) — keeps displayed and billed totals equal.
   const rentalDays = useMemo(() => {
@@ -1369,12 +1391,17 @@ function BookingContent() {
                         const canAddMore = inCartCount < maxAvail;
                         const vMinDays = minDaysFor(live(v), data.pickupDate);
                         const isMinViolated = rentalDays < vMinDays;
+                        // No free car of this model for these dates: visible, but cannot be chosen.
+                        const soldOut = v.isAvailable === false || (v.availableUnits !== undefined && v.availableUnits <= 0);
 
                         return (
                           <div
                             key={v._id}
+                            aria-disabled={soldOut && !isSelected ? true : undefined}
                             className={`w-full flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 p-3.5 sm:p-4 rounded-xl border-2 transition-all text-left ${
-                              isSelected
+                              soldOut && !isSelected
+                                ? "border-border dark:border-neutral-800 bg-slate-50 dark:bg-neutral-900/60 opacity-75"
+                                : isSelected
                                 ? "border-blue-600 bg-blue-50/70 dark:bg-blue-950/30 shadow-md"
                                 : "border-border dark:border-neutral-800 hover:border-blue-300 dark:hover:border-neutral-700 bg-white dark:bg-neutral-800/60"
                             }`}
@@ -1385,8 +1412,13 @@ function BookingContent() {
                                 alt={`${v.brand} ${v.model}`}
                                 loading="lazy"
                                 decoding="async"
-                                className="w-full h-full object-contain p-1.5"
+                                className={`w-full h-full object-contain p-1.5 ${soldOut ? "grayscale" : ""}`}
                               />
+                              {soldOut && (
+                                <span className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold shadow">
+                                  {locale === "ar" ? "نفدت في هذه التواريخ" : locale === "en" ? "Sold out for these dates" : "Épuisée à ces dates"}
+                                </span>
+                              )}
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex flex-wrap items-center gap-2">
@@ -1438,7 +1470,13 @@ function BookingContent() {
                                   {v.fuelType}
                                 </span>
                               </div>
-                              {v.availableUnits !== undefined && (
+                              {soldOut ? (
+                                <div className="flex items-center gap-1.5 mt-2">
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300 border border-red-300 dark:border-red-800">
+                                    {locale === "ar" ? "نفدت في هذه التواريخ — جرّب تواريخ أخرى" : locale === "en" ? "Sold out for these dates — try other dates" : "Épuisée à ces dates — essayez d'autres dates"}
+                                  </span>
+                                </div>
+                              ) : v.availableUnits !== undefined && (
                                 <div className="flex items-center gap-1.5 mt-2">
                                   <span
                                     className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
@@ -1470,7 +1508,15 @@ function BookingContent() {
                                 )}
                               </div>
                               <div className="flex items-center gap-1.5">
-                                {inCartCount > 0 ? (
+                                {soldOut && inCartCount === 0 ? (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-neutral-800 text-muted-foreground text-xs font-semibold cursor-not-allowed opacity-75 border border-dashed border-slate-300 dark:border-neutral-700"
+                                  >
+                                    {locale === "ar" ? "غير متاحة" : locale === "en" ? "Unavailable" : "Indisponible"}
+                                  </button>
+                                ) : inCartCount > 0 ? (
                                   <>
                                     <button
                                       type="button"
@@ -1484,7 +1530,7 @@ function BookingContent() {
                                     >
                                       - Retirer
                                     </button>
-                                    {canAddMore && !isMinViolated && (
+                                    {canAddMore && !isMinViolated && !soldOut && (
                                       <button
                                         type="button"
                                         onClick={() => {
