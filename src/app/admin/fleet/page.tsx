@@ -23,11 +23,13 @@ import {
   Package,
   AlertCircle,
   Save,
+  KeyRound,
 } from "lucide-react";
 import { VehicleItem } from "../mockData";
 import { VehicleImageManager, newImageKey, type ManagedImage } from "@/components/admin/VehicleImageManager";
 import { cloudinaryUrl } from "@/lib/cloudinaryUrl";
 import { FleetAccordion } from "@/components/admin/FleetAccordion";
+import { ColorStat } from "@/components/admin/ui";
 import { FleetIntegrity } from "@/components/admin/FleetIntegrity";
 import { ActionMenu, QuickView, Field, Section, ViewToggle, btn, standardActions, useViewMode, usePermissions } from "@/components/admin/ui";
 
@@ -664,51 +666,12 @@ export default function AdminFleetPage() {
         </button>
       </div>
 
-      {/* 4 STATS CARDS */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          {
-            label: "Total Flotte",
-            value: totalCount,
-            color: "text-slate-900 dark:text-white",
-            badge: `${vehicles.length} modèles`,
-            badgeColor: "text-blue-500",
-          },
-          {
-            label: "Disponibles",
-            value: availableCount,
-            color: "text-emerald-500",
-            badge: "Prêt à louer",
-            badgeColor: "text-emerald-500",
-          },
-          {
-            label: "En Location",
-            value: rentedCount,
-            color: "text-blue-500",
-            badge: "Sur contrat",
-            badgeColor: "text-blue-500",
-          },
-          {
-            label: "En Atelier",
-            value: maintenanceCount,
-            color: "text-amber-500",
-            badge: "Maintenance",
-            badgeColor: "text-amber-500",
-          },
-        ].map((stat, i) => (
-          <div
-            key={i}
-            className="rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 p-4 shadow-sm"
-          >
-            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              {stat.label}
-            </span>
-            <div className="mt-2 flex items-baseline justify-between">
-              <span className={`text-2xl font-bold ${stat.color}`}>{stat.value}</span>
-              <span className={`text-xs font-medium ${stat.badgeColor}`}>{stat.badge}</span>
-            </div>
-          </div>
-        ))}
+      {/* 4 STATS CARDS (physical cars) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+        <ColorStat tone="blue" icon={Car} value={totalCount} label="Véhicules" sub={`${vehicles.length} modèles`} />
+        <ColorStat tone="green" icon={CheckCircle2} value={availableCount} label="Disponibles" sub="Prêts à louer" />
+        <ColorStat tone="purple" icon={KeyRound} value={rentedCount} label="En location" sub="Sur contrat" />
+        <ColorStat tone="orange" icon={Wrench} value={maintenanceCount} label="Au garage" sub="Maintenance" />
       </div>
 
       {/* FILTERS & SEARCH */}

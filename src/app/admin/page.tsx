@@ -1,5 +1,7 @@
 "use client";
 
+
+import { ColorStat } from "@/components/admin/ui";
 import React, { useState } from "react";
 import Link from "next/link";
 import {
@@ -7,7 +9,6 @@ import {
   Car,
   CalendarCheck,
   Percent,
-  ArrowUpRight,
   ArrowDownRight,
   Clock,
   MapPin,
@@ -246,101 +247,40 @@ export default function AdminDashboardPage() {
         </div>
       </div>
 
-      {/* 4 TOP KPI CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* KPI 1: Total Revenue */}
-        <div className="rounded-2xl bg-white dark:bg-gradient-to-br dark:from-[#0f141f] dark:to-slate-900/90 border border-slate-200 dark:border-slate-800 p-5 shadow-sm dark:shadow-xl relative overflow-hidden group charging-card">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              {lang === "fr" ? "Chiffre d'Affaires" : "Total Revenue"}
-            </span>
-            <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-              <TrendingUp className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              {stats.monthRevenue.toLocaleString("fr-FR")} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">TND</span>
-            </div>
-            <div className="mt-2 flex items-center gap-1.5 text-xs">
-              {stats.trend !== null ? (
-                <span className={`inline-flex items-center font-semibold ${stats.trend >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                  <ArrowUpRight className={`w-3.5 h-3.5 mr-0.5 ${stats.trend < 0 ? "rotate-90" : ""}`} />
-                  {stats.trend > 0 ? "+" : ""}
-                  {stats.trend}%
-                </span>
-              ) : null}
-              <span className="text-slate-500 dark:text-slate-400">
-                {stats.trend !== null ? (lang === "fr" ? "vs mois précédent" : "vs last month") : lang === "fr" ? "ce mois-ci (départs)" : "this month (pickups)"}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* KPI 2: Active Rentals */}
-        <div className="rounded-2xl bg-white dark:bg-gradient-to-br dark:from-[#0f141f] dark:to-slate-900/90 border border-slate-200 dark:border-slate-800 p-5 shadow-sm dark:shadow-xl relative overflow-hidden group charging-card">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              {lang === "fr" ? "Locations Actives" : "Active Rentals"}
-            </span>
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-              <Car className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              {activeCount} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">{lang === "fr" ? "Véhicules" : "Vehicles"}</span>
-            </div>
-            <div className="mt-2 flex items-center gap-1.5 text-xs">
-              <span className="text-slate-500 dark:text-slate-400">{lang === "fr" ? "actuellement sur la route" : "currently on the road"}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* KPI 3: Confirmed Reservations */}
-        <div className="rounded-2xl bg-white dark:bg-gradient-to-br dark:from-[#0f141f] dark:to-slate-900/90 border border-slate-200 dark:border-slate-800 p-5 shadow-sm dark:shadow-xl relative overflow-hidden group charging-card">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              {lang === "fr" ? "Réservations Confirmées" : "Confirmed Bookings"}
-            </span>
-            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-              <CalendarCheck className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              {confirmedCount} <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">{lang === "fr" ? "dossiers" : "bookings"}</span>
-            </div>
-            <div className="mt-2 flex items-center gap-1.5 text-xs">
-              <span className="inline-flex items-center text-blue-600 dark:text-blue-400 font-semibold">
-                {pendingCount} {lang === "fr" ? "en attente" : "pending"}
-              </span>
-              <span className="text-slate-500 dark:text-slate-400">{lang === "fr" ? "à traiter" : "to process"}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* KPI 4: Fleet Utilization Rate */}
-        <div className="rounded-2xl bg-white dark:bg-gradient-to-br dark:from-[#0f141f] dark:to-slate-900/90 border border-slate-200 dark:border-slate-800 p-5 shadow-sm dark:shadow-xl relative overflow-hidden group charging-card">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              {lang === "fr" ? "Taux d'Utilisation Flotte" : "Fleet Utilization"}
-            </span>
-            <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-600 dark:text-purple-400 flex items-center justify-center">
-              <Percent className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="mt-4">
-            <div className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              {stats.utilization}% <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">({fleet.total} {lang === "fr" ? "voitures" : "cars"})</span>
-            </div>
-            <div className="mt-2 flex items-center gap-1.5 text-xs">
-              <span className="text-slate-500 dark:text-slate-400">
-                {stats.onRoad} {lang === "fr" ? "en location aujourd'hui" : "rented today"}
-              </span>
-            </div>
-          </div>
-        </div>
+      {/* 4 TOP KPI CARDS (same figures, coloured cards) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+        <ColorStat
+          tone="navy"
+          icon={TrendingUp}
+          value={<>{stats.monthRevenue.toLocaleString("fr-FR")} <span className="text-base font-bold">DT</span></>}
+          label={lang === "fr" ? "Chiffre d'affaires" : "Total revenue"}
+          sub={
+            stats.trend !== null
+              ? `${stats.trend > 0 ? "+" : ""}${stats.trend}% ${lang === "fr" ? "vs mois précédent" : "vs last month"}`
+              : lang === "fr" ? "ce mois-ci (départs)" : "this month (pickups)"
+          }
+        />
+        <ColorStat
+          tone="green"
+          icon={Car}
+          value={activeCount}
+          label={lang === "fr" ? "En location" : "Active rentals"}
+          sub={lang === "fr" ? "actuellement sur la route" : "currently on the road"}
+        />
+        <ColorStat
+          tone="purple"
+          icon={CalendarCheck}
+          value={confirmedCount}
+          label={lang === "fr" ? "Réservations confirmées" : "Confirmed bookings"}
+          sub={`${pendingCount} ${lang === "fr" ? "en attente à traiter" : "pending to process"}`}
+        />
+        <ColorStat
+          tone="orange"
+          icon={Percent}
+          value={`${stats.utilization}%`}
+          label={lang === "fr" ? "Utilisation de la flotte" : "Fleet utilization"}
+          sub={`${stats.onRoad} ${lang === "fr" ? "en location" : "rented"} · ${fleet.total} ${lang === "fr" ? "voitures" : "cars"}`}
+        />
       </div>
 
       {/* CHARTS & FLEET STATUS ROW */}
@@ -382,7 +322,7 @@ export default function AdminDashboardPage() {
                 <YAxis
                   stroke="#64748b"
                   tick={{ fontSize: 11 }}
-                  tickFormatter={(val) => `${(val / 1000).toFixed(0)}k`}
+                  tickFormatter={(val) => (Math.abs(val) >= 1000 ? `${Math.round(val / 100) / 10}k` : String(Math.round(val)))}
                 />
                 <Tooltip
                   contentStyle={{
