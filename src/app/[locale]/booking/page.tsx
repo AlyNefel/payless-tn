@@ -405,6 +405,14 @@ function BookingContent() {
       ? calculateSeasonalRentalTotal(live(vehicle), data.pickupDate, data.returnDate).averageDailyRate
       : getVehicleEffectiveDailyRate(live(vehicle), data.pickupDate);
 
+  /** "3 j × 100 + 2 j × 150": one part per rate when the rental spans two periods. */
+  const rateDetail = (vehicle: Vehicle) => {
+    const segs = calculateSeasonalRentalTotal(live(vehicle), data.pickupDate, data.returnDate).segments;
+    const d = locale === "ar" ? "ي" : locale === "en" ? "d" : "j";
+    if (segs.length === 0) return `${rentalDays} ${d} × ${fmt(Math.round(vehicleSubtotal(vehicle) / rentalDays))} ${currencySymbol}`;
+    return segs.map((x) => `${x.days} ${d} × ${fmt(x.dailyRate)} ${currencySymbol}`).join(" + ");
+  };
+
   const vehicleSubtotal = (vehicle: Vehicle) => {
     const { subtotal: seasonal } = calculateSeasonalRentalTotal(live(vehicle), data.pickupDate, data.returnDate);
     return seasonal || (vehicle.pricing.daily || 0) * rentalDays;
@@ -2125,9 +2133,10 @@ function BookingContent() {
                               <span className="font-semibold">
                                 {locale === "ar" ? "إيجار" : locale === "en" ? "Rental" : "Location"}{cart.length > 1 ? ` #${cIdx + 1} ` : " "}{cItem.vehicle.brand} {cItem.vehicle.model}
                               </span>
+                              <span className="block sm:hidden text-[11px] font-mono text-muted-foreground mt-0.5">{rateDetail(cItem.vehicle)}</span>
                             </td>
                             <td className="py-2.5 px-3.5 sm:px-4 hidden sm:table-cell text-center font-mono text-muted-foreground">
-                              {rentalDays} j × {fmt(Math.round(vehicleSubtotal(cItem.vehicle) / rentalDays))} {currencySymbol}
+                              {rateDetail(cItem.vehicle)}
                             </td>
                             <td className="py-2.5 px-3.5 sm:px-4 text-right font-bold font-mono">
                               {fmt(vehicleSubtotal(cItem.vehicle))} {currencySymbol}

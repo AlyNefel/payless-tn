@@ -1,5 +1,6 @@
 "use client";
 
+import { NumberInput } from "@/components/admin/ui/NumberInput";
 import { Plus, Trash2, TrendingDown } from "lucide-react";
 
 export interface Tier {
@@ -41,11 +42,11 @@ export function DegressiveEditor({ tiers, baseRate, onChange }: { tiers: Tier[];
               <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
                 <label>
                   <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Dès (jours)</span>
-                  <input type="number" min={2} max={365} className={field} value={t.minDays} onChange={(e) => set(i, { minDays: Number(e.target.value) })} />
+                  <NumberInput min={2} max={365} className={field} value={t.minDays} onValueChange={(n) => set(i, { minDays: n })} />
                 </label>
                 <label>
                   <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Remise %</span>
-                  <input type="number" min={0} max={90} step="0.5" className={field} value={t.percent} onChange={(e) => set(i, { percent: Number(e.target.value) })} />
+                  <NumberInput min={0} max={90} step="0.5" decimal className={field} value={t.percent} onValueChange={(n) => set(i, { percent: n })} />
                 </label>
                 <button type="button" aria-label={`Supprimer le palier ${t.minDays} jours`} onClick={() => onChange(tiers.filter((_, k) => k !== i))} className="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10">
                   <Trash2 className="w-4 h-4" />

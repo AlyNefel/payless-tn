@@ -10,7 +10,7 @@ import { withExtraIcons } from "@/lib/extrasServer";
 import mongoose from "mongoose";
 import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected } from "@/lib/extras";
 import { quoteBookingDates } from "@/lib/rentalQuote";
-import { rateOn } from "@/lib/seasonalPricing";
+import { rentalDaysPrice } from "@/lib/seasonalPricing";
 import { getRentalRules, priceSource } from "@/lib/rentalRules";
 import { bookingMoney, recordPayment, resyncAfterPriceChange } from "@/lib/ledger";
 import { logAudit } from "@/lib/audit";
@@ -833,10 +833,10 @@ async function handleAction(id: string, body: unknown, by: string) {
         { status: 409 }
       );
     }
-    // Price locked at the start of the rental: extra days at the rate of the period of the PICKUP
-    // day (same rule as a booking spanning two periods), for the car the customer has now (after a
-    // car change: the new model), with the model's degressive tariff for the new total duration.
-    // Each car of a multi-car booking at its own model's rate. A custom price (pricing.edit) wins.
+    // Mixed price: each extra day at the rate of the period it falls in (same rule as a booking
+    // spanning two periods), for the car the customer has now (after a car change: the new model),
+    // with the model's degressive tariff for the new total duration. Each car of a multi-car
+    // booking at its own model's rate. A custom price (pricing.edit) wins.
     const ids = booking.vehicles && booking.vehicles.length > 0 ? booking.vehicles.map((v) => String(v.vehicleId)) : [String(vehicle?._id || booking.vehicleId)];
     let rental: number;
     if (a.dailyRateTND !== undefined) {
@@ -848,9 +848,11 @@ async function handleAction(id: string, body: unknown, by: string) {
       const pickupDay = holdDays(booking.pickupDate, booking.pickupDate)[0];
       const rate = (vid: string) => {
         const m = models.find((x) => String(x._id) === vid);
-        return m ? rateOn(priceSource(m, rules), pickupDay, newDays) : Number(currentRate ?? vehicle?.pricing?.daily ?? 0);
+        return m
+          ? rentalDaysPrice(priceSource(m, rules), pickupDay, oldDays, newDays, newDays)
+          : Number(currentRate ?? vehicle?.pricing?.daily ?? 0) * delta;
       };
-      rental = ids.reduce((acc, vid) => acc + rate(vid) * delta, 0);
+      rental = ids.reduce((acc, vid) => acc + rate(vid), 0);
       dailyUsed = Math.round(rental / delta / ids.length);
     }
     const extras = perDayExtras(delta);
@@ -858,11 +860,31 @@ async function handleAction(id: string, body: unknown, by: string) {
     pb.subtotal = (pb.subtotal || 0) + rental;
     pb.extrasTotal = (pb.extrasTotal || 0) + extras;
   } else if (delta < 0) {
-    // Reduction: the removed days are refunded at the booking's average daily price.
+    // Reduction: the removed days are the last ones. After a car change they are at the current
+    // car's rate. Otherwise each removed day is refunded at the share of the price it really cost:
+    // with a mixed price (two periods) a high-season day weighs more than a low-season day.
     const removed = -delta;
-    // The removed days are the last ones: after a car change they are at the current car's rate.
-    dailyUsed = currentRate ?? Math.round((pb.subtotal || 0) / oldDays);
-    const rental = Math.min(pb.subtotal || 0, currentRate !== null ? currentRate * removed : Math.round(((pb.subtotal || 0) * removed) / oldDays));
+    let refundRental: number;
+    if (currentRate !== null) {
+      refundRental = currentRate * removed;
+    } else {
+      const ids = booking.vehicles && booking.vehicles.length > 0 ? booking.vehicles.map((v) => String(v.vehicleId)) : [String(vehicle?._id || booking.vehicleId)];
+      const models = await Vehicle.find({ _id: { $in: ids } }).lean();
+      const rules = await getRentalRules();
+      const pickupDay = holdDays(booking.pickupDate, booking.pickupDate)[0];
+      let part = 0;
+      let all = 0;
+      for (const vid of ids) {
+        const m = models.find((x) => String(x._id) === vid);
+        if (!m) continue;
+        const src = priceSource(m, rules);
+        part += rentalDaysPrice(src, pickupDay, newDays, oldDays, oldDays);
+        all += rentalDaysPrice(src, pickupDay, 0, oldDays, oldDays);
+      }
+      refundRental = all > 0 ? Math.round(((pb.subtotal || 0) * part) / all) : Math.round(((pb.subtotal || 0) * removed) / oldDays);
+    }
+    const rental = Math.min(pb.subtotal || 0, refundRental);
+    dailyUsed = Math.round(rental / removed);
     const extras = perDayExtras(removed);
     amount = -(rental + extras + perDayContrib * removed);
     pb.subtotal = Math.max(0, (pb.subtotal || 0) - rental);

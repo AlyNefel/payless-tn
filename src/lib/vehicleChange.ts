@@ -3,7 +3,7 @@ import connectDB from "./db";
 import { Booking, Vehicle } from "@/models";
 import type { IAssignedUnit } from "@/models/Booking";
 import { computeRentalDays } from "./extras";
-import { rateOn } from "./seasonalPricing";
+import { rentalDaysPrice } from "./seasonalPricing";
 import { getRentalRules, priceSource } from "./rentalRules";
 import { HOLDING_STATUSES } from "./bookingOverlap";
 import { claimUnit, holdDays, listUnitAvailability, reassignBookingsOfUnit, segmentDays, syncBookingAssignment, unitLabel } from "./fleetUnits";
@@ -67,8 +67,8 @@ export async function changeVehicle(bookingId: string, input: ChangeVehicleInput
   const pb = booking.pricingBreakdown;
   const lines =
     booking.vehicles && booking.vehicles.length > 0
-      ? booking.vehicles.map((v) => ({ vehicleId: String(v.vehicleId), dailyRate: v.dailyRate, depositAmount: v.depositAmount }))
-      : [{ vehicleId: String(booking.vehicleId), dailyRate: pb.dailyRate, depositAmount: pb.depositAmount }];
+      ? booking.vehicles.map((v) => ({ vehicleId: String(v.vehicleId), dailyRate: v.dailyRate, subtotal: v.subtotal, depositAmount: v.depositAmount }))
+      : [{ vehicleId: String(booking.vehicleId), dailyRate: pb.dailyRate, subtotal: pb.subtotal, depositAmount: pb.depositAmount }];
   const i = input.lineIndex;
   if (!Number.isInteger(i) || i < 0 || i >= lines.length) throw new ChangeError("Voiture de la réservation introuvable.");
   const oldModelId = lines[i].vehicleId;
@@ -121,11 +121,26 @@ export async function changeVehicle(bookingId: string, input: ChangeVehicleInput
   const daysChanged = split ? computeRentalDays(eff, returnDay) : totalDays;
   const oldDaily = Number(lines[i].dailyRate || pb.dailyRate || 0);
   const rules = await getRentalRules();
-  // Price locked at the start of the rental: the new car at its rate for the period of the PICKUP
-  // day, with the new model's degressive tariff for the full duration of the rental.
-  const listDaily = rateOn(priceSource(newModel, rules), pickupDay, totalDays) || Number(newModel.pricing?.daily || 0);
-  const newDaily = input.priceMode === "keep" ? oldDaily : listDaily;
-  const amount = (newDaily - oldDaily) * daysChanged;
+  // Mixed price: each changed day at the rate of the period it falls in, with the model's
+  // degressive tariff for the full duration of the rental.
+  const firstChanged = Math.max(0, totalDays - daysChanged);
+  const newList = rentalDaysPrice(priceSource(newModel, rules), pickupDay, firstChanged, totalDays, totalDays);
+  // What the old car costs for those days: its stored average rate (custom prices kept), weighted
+  // by the periods of the changed days versus the days that average covers.
+  let oldSpan = oldDaily * daysChanged;
+  if (oldModel) {
+    const src = priceSource(oldModel, rules);
+    const refFrom = lastChange ? Math.max(0, totalDays - computeRentalDays(lastChange.effectiveDate, booking.returnDate)) : 0;
+    const refList = rentalDaysPrice(src, pickupDay, refFrom, totalDays, totalDays);
+    const spanList = rentalDaysPrice(src, pickupDay, firstChanged, totalDays, totalDays);
+    // Before any change the line's own subtotal is exact (the average rate is rounded).
+    const refAmount = !lastChange && Number(lines[i].subtotal) > 0 ? Number(lines[i].subtotal) : oldDaily * (totalDays - refFrom);
+    if (refList > 0) oldSpan = Math.round((refAmount * spanList) / refList);
+  }
+  const newSpan = input.priceMode === "keep" ? oldSpan : newList || Number(newModel.pricing?.daily || 0) * daysChanged;
+  const listDaily = daysChanged > 0 ? Math.round((newList || Number(newModel.pricing?.daily || 0) * daysChanged) / daysChanged) : 0;
+  const newDaily = daysChanged > 0 ? Math.round(newSpan / daysChanged) : oldDaily;
+  const amount = newSpan - oldSpan;
   const newTotal = Math.max(0, (pb.totalAmount || 0) + amount);
   const before = await bookingMoney(bookingId, pb.totalAmount || 0);
   const paid = before.paid;

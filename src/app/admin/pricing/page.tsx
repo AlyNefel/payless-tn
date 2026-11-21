@@ -1,5 +1,6 @@
 "use client";
 
+import { NumberInput } from "@/components/admin/ui/NumberInput";
 import React, { useState, useEffect } from "react";
 import {
   Tag,
@@ -300,13 +301,10 @@ export default function AdminPricingPage() {
                         Tarif Standard (Jour) :
                       </span>
                       <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          min="1"
+                        <NumberInput
+                          min={1}
                           value={vehicle.pricing.daily || 0}
-                          onChange={(e) =>
-                            handleBaseRateChange(vehicle._id, Number(e.target.value))
-                          }
+                          onValueChange={(n) => handleBaseRateChange(vehicle._id, n)}
                           className="w-18 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-sm font-bold text-center text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                         <span className="text-xs font-bold text-amber-500">TND</span>
@@ -318,14 +316,11 @@ export default function AdminPricingPage() {
                         Durée min. :
                       </span>
                       <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          min="1"
-                          max="365"
+                        <NumberInput
+                          min={1}
+                          max={365}
                           value={vehicle.minRentalDays || 1}
-                          onChange={(e) =>
-                            handleMinRentalDaysChange(vehicle._id, Number(e.target.value))
-                          }
+                          onValueChange={(n) => handleMinRentalDaysChange(vehicle._id, n)}
                           className="w-14 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-sm font-bold text-center text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                         <span className="text-xs font-bold text-blue-500">jours</span>

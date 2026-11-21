@@ -1,5 +1,6 @@
 "use client";
 
+import { NumberInput } from "@/components/admin/ui/NumberInput";
 import { Trash2 } from "lucide-react";
 
 export interface PricePeriod {
@@ -103,15 +104,15 @@ export function PeriodEditor({
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end">
         <label>
           <span className={label}>Tarif / jour (TND)</span>
-          <input type="number" min={1} className={`${field} font-bold`} value={period.dailyRate} onChange={(e) => set({ dailyRate: Number(e.target.value) })} />
+          <NumberInput min={1} className={`${field} font-bold`} value={period.dailyRate} onValueChange={(n) => set({ dailyRate: n })} />
         </label>
         <label>
           <span className={label}>Remise %</span>
-          <input type="number" min={0} max={90} className={`${field} font-bold`} value={period.discountPercent || 0} onChange={(e) => set({ discountPercent: Number(e.target.value) })} />
+          <NumberInput min={0} max={90} decimal className={`${field} font-bold`} value={period.discountPercent || 0} onValueChange={(n) => set({ discountPercent: n })} />
         </label>
         <label>
           <span className={label}>Durée min. (jours)</span>
-          <input type="number" min={0} max={365} className={`${field} font-bold`} value={period.minDays || 0} onChange={(e) => set({ minDays: Number(e.target.value) })} />
+          <NumberInput min={0} max={365} className={`${field} font-bold`} value={period.minDays || 0} onValueChange={(n) => set({ minDays: n })} />
         </label>
         <div className="flex items-center justify-between gap-2 col-span-2 sm:col-span-1">
           <div className="px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-right">
