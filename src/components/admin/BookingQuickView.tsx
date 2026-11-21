@@ -43,7 +43,7 @@ interface FullBooking {
   returnLocationId?: { name?: { fr?: string }; city?: string };
   pricingBreakdown?: { totalAmount?: number; subtotal?: number; extrasTotal?: number; depositAmount?: number; discountAmount?: number };
   extras?: { name: string; quantity: number; icon?: string; lineTotal?: number; price?: number }[];
-  assignedUnits?: { licensePlate?: string }[];
+  assignedUnits?: { licensePlate?: string; to?: string }[];
 }
 
 const dt = (d?: string, t?: string) =>
@@ -89,7 +89,7 @@ export function BookingQuickView({ booking, onClose }: { booking: BookingSummary
       : full?.vehicleId
       ? `${full.vehicleId.brand} ${full.vehicleId.model}${full.vehicleId.year ? ` (${full.vehicleId.year})` : ""}`
       : booking.vehicleName;
-  const plates = (full?.assignedUnits || []).map((u) => u.licensePlate || "immat. à saisir").join(", ");
+  const plates = (full?.assignedUnits || []).filter((u) => !u.to).map((u) => u.licensePlate || "immat. à saisir").join(", ");
   const extras = (full?.extras || []).filter((e) => (e.quantity || 0) > 0);
   const editHref = `/admin/bookings/${booking._id}`;
 

@@ -12,6 +12,8 @@ export interface ISeasonalPrice {
   endMonth?: number;   // 1 to 12
   dailyRate: number;   // in DT or cents
   discountPercent?: number; // optional discount applied during this period
+  /** Minimum rental days for a rental starting in this period (0 = the model's minimum). */
+  minDays?: number;
 }
 
 export type UnitStatus = "active" | "maintenance" | "out_of_service";
@@ -58,6 +60,8 @@ export interface IVehicle {
     currency: string;
     deposit: number;
     seasonalPrices?: ISeasonalPrice[];
+    /** Degressive tariff of this model: from `minDays` days, `percent` % off the daily rate. */
+    durationDiscounts?: { minDays: number; percent: number }[];
     minRentalDays?: number;
   };
   minRentalDays?: number;
@@ -125,6 +129,13 @@ const VehicleSchema = new Schema<IVehicle>(
       currency: { type: String, default: "TND" },
       deposit: { type: Number, default: 0 },
       minRentalDays: { type: Number, default: 1 },
+      durationDiscounts: [
+        {
+          _id: false,
+          minDays: { type: Number, required: true, min: 2, max: 365 },
+          percent: { type: Number, required: true, min: 0, max: 90 },
+        },
+      ],
       seasonalPrices: [
         {
           name: { type: String, default: "" },
@@ -134,6 +145,7 @@ const VehicleSchema = new Schema<IVehicle>(
           endMonth: { type: Number },
           dailyRate: { type: Number, required: true },
           discountPercent: { type: Number, default: 0 },
+          minDays: { type: Number, default: 0, min: 0, max: 365 },
         },
       ],
     },

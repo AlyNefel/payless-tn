@@ -34,6 +34,7 @@ import {
 import { useAdminLang } from "@/contexts/AdminLangContext";
 import { ActionMenu, StatusBadge, ViewToggle, standardActions, useViewMode, usePermissions } from "@/components/admin/ui";
 import { BookingQuickView } from "@/components/admin/BookingQuickView";
+import { BookingPeriodFilter, presetRange, type BookingPeriod, type DateField } from "@/components/admin/BookingPeriodFilter";
 
 export interface BookingDisplayItem {
   id: string;
@@ -84,13 +85,34 @@ export default function AdminBookingsPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [sendingEmailForRef, setSendingEmailForRef] = useState<string | null>(null);
 
-  const fetchBookings = async () => {
+  // Search, status and period are applied by the server: every booking is reachable, not only the last 100.
+  const [period, setPeriod] = useState<BookingPeriod>({ preset: "all", from: "", to: "", field: "pickup" });
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [periodAmount, setPeriodAmount] = useState(0);
+  const PAGE = 50;
+
+  const fetchBookings = async (nextPage = 1) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/bookings?limit=100");
+      const q = new URLSearchParams({ limit: String(PAGE), page: String(nextPage) });
+      if (search.trim()) q.set("search", search.trim());
+      if (activeTab !== "All") q.set("status", activeTab);
+      if (period.preset !== "all" && (period.from || period.to)) {
+        if (period.from) q.set("from", period.from);
+        if (period.to) q.set("to", period.to);
+        q.set("dateField", period.field);
+        q.set("sort", period.field === "return" ? "return_asc" : period.field === "created" ? "created_desc" : "pickup_asc");
+      }
+      const res = await fetch(`/api/admin/bookings?${q}`, { cache: "no-store" });
       const json = await res.json();
       if (json.success && Array.isArray(json.bookings)) {
-        setBookings(
+        setCounts(json.counts || {});
+        setTotal(json.total || 0);
+        setPeriodAmount(json.periodAmount || 0);
+        setPage(nextPage);
+        const mapped =
           json.bookings.map((b: any) => ({
             ...b,
             totalPrice: b.totalAmount >= 1000 ? Math.round(b.totalAmount / 100) : b.totalAmount,
@@ -99,8 +121,8 @@ export default function AdminBookingsPage() {
             depositAmount: b.depositAmount >= 1000 ? Math.round(b.depositAmount / 100) : b.depositAmount || 0,
             timbreFiscal: b.timbreFiscal ? (b.timbreFiscal >= 100 ? b.timbreFiscal / 100 : b.timbreFiscal) : 1,
             contributionLF2026: b.contributionLF2026 ? (b.contributionLF2026 >= 100 ? b.contributionLF2026 / 100 : b.contributionLF2026) : (b.rentalDuration || 1) * 2,
-          }))
-        );
+          }));
+        setBookings((prev) => (nextPage === 1 ? mapped : [...prev, ...mapped]));
       }
     } catch (e) {
       console.error("Failed to fetch bookings:", e);
@@ -111,39 +133,35 @@ export default function AdminBookingsPage() {
   };
 
   useEffect(() => {
-    // Deep links (dashboard, calendar, notifications): /admin/bookings?search=PAY-…
-    const q = new URLSearchParams(window.location.search).get("search");
+    // Deep links (dashboard, calendar, notifications): /admin/bookings?search=PAY-… or ?period=week
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get("search");
     if (q) setSearch(q);
-    fetchBookings();
+    const p = params.get("period");
+    if (p) setPeriod((prev) => ({ ...prev, preset: p, ...presetRange(p), field: (params.get("dateField") as DateField) || prev.field }));
+    setReady(true);
   }, []);
+  const [ready, setReady] = useState(false);
 
-  // Tab counts
+  // Reload from the server whenever a filter changes (search debounced).
+  useEffect(() => {
+    if (!ready) return;
+    const t = setTimeout(() => fetchBookings(1), search ? 300 : 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, search, activeTab, period.preset, period.from, period.to, period.field]);
+
   const tabCounts = {
-    All: bookings.length,
-    pending: bookings.filter((b) => b.status === "pending").length,
-    confirmed: bookings.filter((b) => b.status === "confirmed").length,
-    active: bookings.filter((b) => b.status === "active").length,
-    completed: bookings.filter((b) => b.status === "completed").length,
-    cancelled: bookings.filter((b) => b.status === "cancelled" || b.status === "rejected").length,
+    All: counts.All || 0,
+    pending: counts.pending || 0,
+    confirmed: counts.confirmed || 0,
+    active: counts.active || 0,
+    completed: counts.completed || 0,
+    cancelled: counts.cancelled || 0,
   };
 
-  // Filtered list
-  const filteredBookings = bookings.filter((b) => {
-    const matchesTab =
-      activeTab === "All" ||
-      b.status?.toLowerCase() === activeTab.toLowerCase() ||
-      (activeTab === "cancelled" && b.status === "rejected");
-
-    const matchesSearch =
-      (b.reference || "").toLowerCase().includes(search.toLowerCase()) ||
-      (b.bookingReference || "").toLowerCase().includes(search.toLowerCase()) ||
-      (b.customerName || "").toLowerCase().includes(search.toLowerCase()) ||
-      (b.customerPhone || "").includes(search) ||
-      (b.vehicleName || "").toLowerCase().includes(search.toLowerCase()) ||
-      (b.licensePlate || "").toLowerCase().includes(search.toLowerCase());
-
-    return matchesTab && matchesSearch;
-  });
+  // The server already applied search, status and period.
+  const filteredBookings = bookings;
 
   // Handle instant status change
   const handleStatusChange = async (id: string, newStatus: BookingDisplayItem["status"]) => {
@@ -332,7 +350,7 @@ export default function AdminBookingsPage() {
 
           <ViewToggle value={view} onChange={setView} />
           <button
-            onClick={fetchBookings}
+            onClick={() => fetchBookings(1)}
             className="flex items-center gap-1.5 px-3 py-2 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-medium hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shadow-xs"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -376,6 +394,8 @@ export default function AdminBookingsPage() {
           ))}
         </div>
 
+        <BookingPeriodFilter value={period} onChange={setPeriod} />
+
         {/* Search Input Bar */}
         <div className="relative">
           <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -389,6 +409,15 @@ export default function AdminBookingsPage() {
         </div>
       </div>
 
+      {loaded && (
+        <p className="text-xs text-slate-500" role="status">
+          {total} réservation{total > 1 ? "s" : ""}
+          {period.preset !== "all" && period.from ? ` · ${period.field === "pickup" ? "départ" : period.field === "return" ? "retour" : period.field === "created" ? "créées" : "en location"} du ${new Date(`${period.from}T12:00:00`).toLocaleDateString("fr-FR")} au ${new Date(`${(period.to || period.from)}T12:00:00`).toLocaleDateString("fr-FR")}` : ""}
+          {periodAmount > 0 ? ` · ${(periodAmount / 100).toLocaleString("fr-FR", { maximumFractionDigits: 0 })} DT (hors annulées)` : ""}
+          {bookings.length < total ? ` · ${bookings.length} affichées` : ""}
+        </p>
+      )}
+
       {/* RESERVATIONS — cards or table (remembered per browser) */}
       {!loaded ? (
         <div className="py-16 flex justify-center">
@@ -396,7 +425,7 @@ export default function AdminBookingsPage() {
         </div>
       ) : filteredBookings.length === 0 ? (
         <div className="py-16 text-center text-sm text-slate-500 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
-          {bookings.length === 0
+          {!search && activeTab === "All" && period.preset === "all"
             ? lang === "fr" ? "Aucune réservation pour le moment." : "No reservations yet."
             : lang === "fr" ? "Aucune réservation ne correspond aux filtres." : "No reservation matches the filters."}
         </div>
@@ -511,6 +540,19 @@ export default function AdminBookingsPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {loaded && bookings.length < total && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => fetchBookings(page + 1)}
+            disabled={loading}
+            className="inline-flex items-center gap-2 px-4 h-10 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+          >
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />} Afficher plus ({total - bookings.length} restantes)
+          </button>
         </div>
       )}
 

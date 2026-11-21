@@ -253,6 +253,8 @@ export interface ContractData {
   back?: ContractInspection;
   /** PNG data URL of the customer's signature (from the departure inspection). */
   customerSignature?: string;
+  /** Car changes during the rental ("Le 03/04/2032 : Kia Picanto → Seat Ibiza (panne)"). */
+  vehicleChanges?: string[];
   /** Special conditions agreed for this rental, printed above the acceptance box. */
   notes?: string;
   minAge?: number;
@@ -315,6 +317,20 @@ export function generateContractPDF(c: ContractData): Buffer {
     c.cars.map((car) => [`${car.brand} ${car.model}`, car.plate || "……………………", car.category || "", car.fuel || "", car.gearbox || ""]),
     [62, 38, 36, 26, 24]
   );
+  if (c.vehicleChanges?.length) {
+    d.setFont("helvetica", "bold");
+    d.setFontSize(7.4);
+    d.setTextColor(...NAVY);
+    s.y += 3.5;
+    d.text("Changement(s) de véhicule pendant la location :", s.m, s.y);
+    d.setFont("helvetica", "normal");
+    d.setTextColor(...INK);
+    for (const line of c.vehicleChanges.slice(0, 3)) {
+      s.y += 3.6;
+      d.text(d.splitTextToSize(`• ${line}`, s.cw)[0], s.m, s.y);
+    }
+    s.y += 1;
+  }
   s.y += 3;
 
   // 4: period

@@ -5,7 +5,7 @@ import { getFleetStockMap, stockWithoutDates } from "@/lib/availability";
 import { sanitizeVehicleForClient } from "@/lib/sanitize";
 import { escapeRegex, isStaffRequest } from "@/lib/apiAuth";
 import mongoose from "mongoose";
-import { applyRules, getRentalRules } from "@/lib/rentalRules";
+import { applyRules, getRentalRules, migrateGlobalPricingToModels } from "@/lib/rentalRules";
 import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate, pricingPeriodName } from "@/lib/seasonalPricing";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +23,8 @@ export async function GET(request: NextRequest) {
     const isAdmin = await isStaffRequest();
     const visibility = isAdmin ? {} : PUBLIC_VEHICLE_FILTER;
 
+    // Old fleet-wide rules are copied into the models before any car is read.
+    await migrateGlobalPricingToModels();
     const vehicleId = searchParams.get("vehicleId") || searchParams.get("id");
     const brandParam = searchParams.get("brand");
     const modelParam = searchParams.get("model");
@@ -156,9 +158,14 @@ export async function GET(request: NextRequest) {
       query.location = new mongoose.Types.ObjectId(location);
     }
 
+    // With a rental period, prices depend on the dates (seasons, degressive tariff): the price
+    // filter and the price sort are applied on the computed period price, after the query.
+    const day = /^\d{4}-\d{2}-\d{2}/;
+    const hasPeriod = Boolean(pickupDate && returnDate && day.test(pickupDate) && day.test(returnDate) && returnDate > pickupDate);
+    const priceFilter: Record<string, number> = {};
+
     // Filter by Price range (TND / minor units resilient)
     if (minPrice || maxPrice) {
-      const priceFilter: Record<string, number> = {};
       if (minPrice) {
         const minVal = parseFloat(minPrice);
         if (!isNaN(minVal) && minVal >= 0) {
@@ -171,7 +178,7 @@ export async function GET(request: NextRequest) {
           priceFilter.$lte = maxVal < 10000 ? Math.round(maxVal * 100) : maxVal;
         }
       }
-      if (Object.keys(priceFilter).length > 0) {
+      if (Object.keys(priceFilter).length > 0 && !hasPeriod) {
         query["pricing.daily"] = priceFilter;
       }
     }
@@ -230,19 +237,17 @@ export async function GET(request: NextRequest) {
         .populate("categoryId")
         .populate("location")
         .sort(sortOptions)
-        .skip(skip)
-        .limit(limit)
+        .skip(hasPeriod ? 0 : skip)
+        .limit(hasPeriod ? 500 : limit)
         .lean(),
       Vehicle.countDocuments(query),
     ]);
 
     // Fleet-wide minimum rental period (a vehicle's own minimum wins when higher).
     const rules = await getRentalRules();
-    const day = /^\d{4}-\d{2}-\d{2}/;
-    const hasPeriod = Boolean(pickupDate && returnDate && day.test(pickupDate) && day.test(returnDate) && returnDate > pickupDate);
 
     // Format & Enrich with stock counters, and sanitize for non-admin
-    const processedVehicles = vehicles.map((v: any) => {
+    let processedVehicles = vehicles.map((v: any) => {
       const vId = v._id.toString();
       // With a date window: exact stock for that window. Without: cars currently in service.
       const stock = fleetStockMap[vId] || stockWithoutDates(v);
@@ -260,6 +265,7 @@ export async function GET(request: NextRequest) {
           days: quote ? quote.days : null,
           total: quote ? quote.subtotal : null,
           periodName: pricingPeriodName(ruled, priceDay),
+          discountPercent: quote?.discountPercent || 0,
           minDays: ruled.minRentalDaysForPeriod,
           meetsMinimum: quote ? quote.days >= ruled.minRentalDaysForPeriod : true,
         },
@@ -272,17 +278,30 @@ export async function GET(request: NextRequest) {
       return isAdmin ? enriched : sanitizeVehicleForClient(enriched);
     });
 
+    let periodTotal = total;
+    if (hasPeriod) {
+      const rate = (v: any) => Number(v.periodPricing?.dailyRate || 0);
+      processedVehicles = processedVehicles.filter(
+        (v: any) => (priceFilter.$gte === undefined || rate(v) >= priceFilter.$gte) && (priceFilter.$lte === undefined || rate(v) <= priceFilter.$lte)
+      );
+      if (!["newest", "seats_desc"].includes(sort)) {
+        processedVehicles.sort((a: any, b: any) => (sort === "price_desc" ? rate(b) - rate(a) : rate(a) - rate(b)));
+      }
+      periodTotal = processedVehicles.length;
+      processedVehicles = processedVehicles.slice(skip, skip + limit);
+    }
+
     return NextResponse.json(
       {
         success: true,
         data: processedVehicles,
         vehicles: processedVehicles,
-        total,
+        total: periodTotal,
         pagination: {
-          total,
+          total: periodTotal,
           page,
           limit,
-          totalPages: Math.ceil(total / limit),
+          totalPages: Math.ceil(periodTotal / limit),
         },
       },
       {

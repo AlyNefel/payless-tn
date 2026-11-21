@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Wrench,
   Droplets,
@@ -126,7 +127,23 @@ const fmtKm = (n: number) => `${Math.round(n).toLocaleString("fr-FR")} km`;
 const fmtDate = (d: string | null) => (d ? new Date(d).toLocaleDateString("fr-FR") : "—");
 const isoDay = (d: string | null) => (d ? new Date(d).toISOString().slice(0, 10) : "");
 
+/** Each garage section has its own page (sidebar links), title and indicators. */
+const SECTIONS: Record<Tab, { title: string; titleEn: string; text: string }> = {
+  vidange: { title: "Vidange", titleEn: "Oil change", text: "Kilométrage, prochaine vidange et intervalle de chaque voiture. Une alerte part quand le seuil de kilomètres est atteint." },
+  maintenance: { title: "Maintenance", titleEn: "Maintenance", text: "Voitures au garage, interventions en cours et entretiens planifiés, avec l'historique et les coûts." },
+  inspection: { title: "Visite technique", titleEn: "Technical inspection", text: "Date de la prochaine visite technique de chaque voiture. Alertes avant l'échéance et à l'expiration." },
+  assurance: { title: "Assurance", titleEn: "Insurance", text: "Contrats d'assurance par voiture : compagnie, police, échéance, coût et pièce jointe. Alertes à 90, 60 et 30 jours." },
+};
+
 export default function GaragePage() {
+  return (
+    <Suspense fallback={null}>
+      <Garage />
+    </Suspense>
+  );
+}
+
+function Garage() {
   const { lang } = useAdminLang();
   const en = lang === "en";
 
@@ -134,7 +151,12 @@ export default function GaragePage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [settings, setSettings] = useState<AlertSettings | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<Tab>("vidange");
+  // The section comes from the URL (sidebar links); switching updates the URL.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const urlTab = searchParams.get("tab");
+  const tab: Tab = urlTab === "maintenance" || urlTab === "inspection" || urlTab === "assurance" ? urlTab : "vidange";
+  const setTab = (t: Tab) => router.replace(`/admin/garage?tab=${t}`, { scroll: false });
   const [view, setView] = useViewMode("garage", "grid");
   const [search, setSearch] = useState("");
   const [onlyAttention, setOnlyAttention] = useState(false);
@@ -165,8 +187,6 @@ export default function GaragePage() {
   useEffect(() => {
     // Deep links from notifications: /admin/garage?tab=inspection&unit=<id>
     const params = new URLSearchParams(window.location.search);
-    const t = params.get("tab");
-    if (t === "maintenance" || t === "inspection" || t === "vidange" || t === "assurance") setTab(t);
     setFocusUnit(params.get("unit"));
     load();
   }, []);
@@ -203,7 +223,7 @@ export default function GaragePage() {
         tab === "vidange"
           ? u.vidangeState !== "ok"
           : tab === "inspection"
-          ? u.inspectionState !== "ok" || u.insuranceState === "soon" || u.insuranceState === "overdue"
+          ? u.inspectionState !== "ok"
           : u.openMaintenance > 0 || u.status === "maintenance" || (u.maintenanceDays !== null && u.maintenanceDays <= 7)
       );
     }
@@ -211,10 +231,34 @@ export default function GaragePage() {
       tab === "vidange"
         ? u.remainingKm
         : tab === "inspection"
-        ? Math.min(u.inspectionDays ?? 9999, u.insuranceDays ?? 9999)
+        ? u.inspectionDays ?? -1
         : -(u.openMaintenance * 1000) + (u.maintenanceDays ?? 9999);
     return [...list].sort((a, b) => rank(a) - rank(b));
   }, [units, search, onlyAttention, tab, focusUnit]);
+
+  const count = (f: (u: GarageUnit) => boolean) => units.filter(f).length;
+  const sectionKpis: { label: string; value: number; cls: string; hint?: string; attention?: boolean }[] =
+    tab === "vidange"
+      ? [
+          { label: "Voitures suivies", value: units.length, cls: "text-slate-900 dark:text-white" },
+          { label: "Vidange dépassée", value: count((u) => u.vidangeState === "overdue"), cls: "text-red-600", attention: true },
+          { label: "Bientôt", value: count((u) => u.vidangeState === "soon"), cls: "text-amber-600", hint: settings ? `moins de ${fmtKm(settings.vidangeKmThreshold)}` : undefined, attention: true },
+          { label: "À jour", value: count((u) => u.vidangeState === "ok"), cls: "text-emerald-600" },
+        ]
+      : tab === "inspection"
+        ? [
+            { label: "Visite expirée", value: count((u) => u.inspectionState === "overdue"), cls: "text-red-600", attention: true },
+            { label: "Bientôt", value: count((u) => u.inspectionState === "soon"), cls: "text-amber-600", hint: settings ? `moins de ${settings.inspectionDaysThreshold} jours` : undefined, attention: true },
+            { label: "Date non renseignée", value: count((u) => u.inspectionState === "unknown"), cls: "text-slate-500", attention: true },
+            { label: "À jour", value: count((u) => u.inspectionState === "ok"), cls: "text-emerald-600" },
+          ]
+        : [
+            { label: "Au garage", value: count((u) => u.status === "maintenance"), cls: "text-blue-600", attention: true },
+            { label: "Hors service", value: count((u) => u.status === "out_of_service"), cls: "text-slate-500" },
+            { label: "Interventions ouvertes", value: units.reduce((a, u) => a + (u.openMaintenance || 0), 0), cls: "text-amber-600", attention: true },
+            { label: "Entretien sous 7 jours", value: count((u) => u.maintenanceDays !== null && u.maintenanceDays <= 7), cls: "text-red-600", attention: true },
+          ];
+  const SectionIcon = tab === "vidange" ? Droplets : tab === "inspection" ? ClipboardCheck : tab === "assurance" ? ShieldAlert : Wrench;
 
   const tabs: { id: Tab; label: string; icon: typeof Wrench; badge: number }[] = [
     { id: "vidange", label: "Vidange", icon: Droplets, badge: (stats?.vidange.overdue || 0) + (stats?.vidange.soon || 0) },
@@ -240,13 +284,10 @@ export default function GaragePage() {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-            <Wrench className="w-6 h-6 text-blue-600" /> {en ? "Garage" : "Garage & entretien"}
+            <SectionIcon className="w-6 h-6 text-blue-600" />
+            <span className="text-slate-400 font-bold text-lg">Garage ·</span> {en ? SECTIONS[tab].titleEn : SECTIONS[tab].title}
           </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            {en
-              ? "One line per physical car (license plate). Alerts are sent automatically."
-              : "Une ligne par véhicule (immatriculation). Les alertes sont envoyées automatiquement."}
-          </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">{SECTIONS[tab].text}</p>
         </div>
         <div className="flex gap-2">
           <button type="button" onClick={() => setModal({ kind: "settings" })} className={`${btn} border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}>
@@ -258,19 +299,20 @@ export default function GaragePage() {
         </div>
       </div>
 
-      {/* KPIs */}
-      {stats && (
+      {/* Indicators of the current section */}
+      {stats && tab !== "assurance" && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {[
-            { label: en ? "Cars" : "Véhicules", value: stats.total, cls: "text-slate-900 dark:text-white" },
-            { label: en ? "In the garage" : "Au garage", value: stats.inGarage, cls: "text-blue-600" },
-            { label: en ? "Oil change due" : "Vidanges à faire", value: stats.vidange.overdue + stats.vidange.soon, cls: stats.vidange.overdue ? "text-red-600" : "text-amber-600" },
-            { label: en ? "Inspection / insurance" : "Visite / assurance", value: stats.inspection.overdue + stats.inspection.soon, cls: stats.inspection.overdue ? "text-red-600" : "text-amber-600" },
-          ].map((k) => (
-            <div key={k.label} className="p-4 rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800">
+          {sectionKpis.map((k) => (
+            <button
+              key={k.label}
+              type="button"
+              onClick={() => k.attention && setOnlyAttention(true)}
+              className={`text-left p-4 rounded-2xl bg-white dark:bg-[#0f141f] border ${k.value > 0 && k.attention ? "border-amber-300 dark:border-amber-800" : "border-slate-200 dark:border-slate-800"}`}
+            >
               <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">{k.label}</p>
               <p className={`text-2xl font-black mt-1 ${k.cls}`}>{k.value}</p>
-            </div>
+              {k.hint && <p className="text-[11px] text-slate-500 mt-0.5">{k.hint}</p>}
+            </button>
           ))}
         </div>
       )}
@@ -340,7 +382,6 @@ export default function GaragePage() {
                 {tab === "vidange" && <th className="p-3">Prochaine vidange</th>}
                 {tab === "vidange" && <th className="p-3">Reste</th>}
                 {tab === "inspection" && <th className="p-3">Visite technique</th>}
-                {tab === "inspection" && <th className="p-3">Assurance</th>}
                 {tab === "maintenance" && <th className="p-3">Prochain entretien</th>}
                 {tab === "maintenance" && <th className="p-3">Interventions ouvertes</th>}
                 <th className="p-3 text-right">Actions</th>
@@ -364,11 +405,6 @@ export default function GaragePage() {
                   {tab === "inspection" && (
                     <td className="p-3">
                       <StatePill state={u.inspectionState}>{u.inspectionDays === null ? "Non renseignée" : `${fmtDate(u.technicalInspectionDate)} · ${u.inspectionDays} j`}</StatePill>
-                    </td>
-                  )}
-                  {tab === "inspection" && (
-                    <td className="p-3">
-                      <StatePill state={u.insuranceState}>{u.insuranceDays === null ? "Non renseignée" : `${fmtDate(u.insuranceExpiryDate)} · ${u.insuranceDays} j`}</StatePill>
                     </td>
                   )}
                   {tab === "maintenance" && <td className="p-3">{u.nextMaintenanceDate ? fmtDate(u.nextMaintenanceDate) : "Non planifié"}</td>}
@@ -481,16 +517,6 @@ function UnitCard({ u, tab, onOpen }: { u: GarageUnit; tab: Tab; onOpen: (m: Mod
                 : u.inspectionDays < 0
                 ? `Expirée (${fmtDate(u.technicalInspectionDate)})`
                 : `${fmtDate(u.technicalInspectionDate)} · ${u.inspectionDays} j`}
-            </StatePill>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-slate-500">Assurance</span>
-            <StatePill state={u.insuranceState}>
-              {u.insuranceDays === null
-                ? "Non renseignée"
-                : u.insuranceDays < 0
-                ? `Expirée (${fmtDate(u.insuranceExpiryDate)})`
-                : `${fmtDate(u.insuranceExpiryDate)} · ${u.insuranceDays} j`}
             </StatePill>
           </div>
         </div>

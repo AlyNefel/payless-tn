@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import {
   LayoutDashboard,
@@ -34,8 +34,11 @@ import {
   Globe,
   Wrench,
   ListOrdered,
+  Droplets,
+  ClipboardCheck,
+  ShieldAlert,
 } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { AdminLangProvider, useAdminLang } from "@/contexts/AdminLangContext";
 import { sectionForPath, type AccessLevel } from "@/lib/permissionsShared";
@@ -82,8 +85,6 @@ const NAV_GROUPS: NavGroup[] = [
     icon: Car,
     items: [
       { title: "Car Model Manager", href: "/admin/fleet", icon: Car },
-      { title: "Tarifs par Période", href: "/admin/pricing", icon: Tag },
-      { title: "Garage & Vidanges", href: "/admin/garage", icon: Wrench },
       { title: "Location Manager", href: "/admin/locations", icon: MapPin },
     ],
   },
@@ -95,8 +96,18 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Tarifs par Période", href: "/admin/pricing", icon: Tag },
       { title: "Options & Équipements", href: "/admin/options", icon: SlidersHorizontal },
       { title: "Frais & Taxes (démo)", href: "/admin/fees", icon: SlidersHorizontal },
-      { title: "Payment & Finance Manager", href: "/admin/finance", icon: Receipt },
       { title: "Promos & Coupons", href: "/admin/promotions", icon: Tag },
+    ],
+  },
+  {
+    id: "garage",
+    groupTitle: { fr: "Garage", en: "Garage" },
+    icon: Wrench,
+    items: [
+      { title: "Vidange", href: "/admin/garage?tab=vidange", icon: Droplets },
+      { title: "Maintenance", href: "/admin/garage?tab=maintenance", icon: Wrench },
+      { title: "Visite technique", href: "/admin/garage?tab=inspection", icon: ClipboardCheck },
+      { title: "Assurance", href: "/admin/garage?tab=assurance", icon: ShieldAlert },
     ],
   },
   {
@@ -149,13 +160,43 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Options & Équipements", href: "/admin/options", icon: SlidersHorizontal },
       { title: "Location Manager", href: "/admin/locations", icon: MapPin },
       { title: "Frais & Taxes Manager", href: "/admin/fees", icon: SlidersHorizontal },
-      { title: "Payment & Finance Manager", href: "/admin/finance", icon: Receipt },
       { title: "Reservation Manager", href: "/admin/bookings", icon: CalendarCheck2 },
       { title: "Étapes de Réservation", href: "/admin/steps", icon: ListOrdered },
     ],
   },
 ];
 
+
+/** Reports the current query string (kept in its own Suspense boundary so pages never wait for it). */
+function QueryWatcher({ onChange }: { onChange: (q: string) => void }) {
+  const params = useSearchParams();
+  const q = params.toString();
+  useEffect(() => onChange(q), [q, onChange]);
+  return null;
+}
+
+/**
+ * Menu entry state, query-aware: "/admin/garage?tab=assurance" is active only on that section;
+ * an entry without a query is active when no sibling entry of the same page matches the query.
+ */
+function navMatch(href: string, pathname: string, query: string, siblings: string[]): boolean {
+  const [path, qs] = href.split("?");
+  if (path === "/admin") return pathname === "/admin";
+  if (!(pathname === path || pathname.startsWith(`${path}/`))) return false;
+  const current = new URLSearchParams(query);
+  if (qs) {
+    const want = new URLSearchParams(qs);
+    for (const [k, v] of want) {
+      // First section of a page = its default (no ?tab=): Vidange for the garage.
+      const first = siblings.filter((h) => h.split("?")[0] === path && h.includes("?"))[0];
+      const isDefault = first === href && !current.get(k);
+      if (current.get(k) !== v && !isDefault) return false;
+    }
+    return true;
+  }
+  // No query on this entry: active unless a sibling entry with a query matches better.
+  return !siblings.some((h) => h !== href && h.startsWith(`${path}?`) && navMatch(h, pathname, query, []));
+}
 
 function AdminLayoutContent({
   children,
@@ -164,6 +205,7 @@ function AdminLayoutContent({
 }) {
   const { lang, setLang, t } = useAdminLang();
   const pathname = usePathname();
+  const [query, setQuery] = useState("");
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -406,6 +448,9 @@ function AdminLayoutContent({
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-black text-slate-900 dark:text-slate-100 flex flex-col lg:flex-row antialiased transition-colors duration-300 selection:bg-blue-600 selection:text-white">
+      <Suspense fallback={null}>
+        <QueryWatcher onChange={setQuery} />
+      </Suspense>
       {/* DESKTOP SIDEBAR */}
       <aside className="hidden lg:flex flex-col w-72 shrink-0 bg-white/95 dark:bg-[#0a0a0a]/95 border-r border-slate-200 dark:border-neutral-800 backdrop-blur-xl sticky top-0 h-screen z-30 transition-colors duration-300">
         {/* Brand Header */}
@@ -437,7 +482,7 @@ function AdminLayoutContent({
             const title = lang === "en" ? group.groupTitle.en : group.groupTitle.fr;
             const isCollapsed = Boolean(collapsedGroups[group.id]);
             const hasActiveChild = group.items.some(
-              (item) => pathname === item.href || (item.href !== "/admin" && pathname.startsWith(item.href))
+              (item) => navMatch(item.href, pathname, query, [])
             );
 
             return (
@@ -485,9 +530,7 @@ function AdminLayoutContent({
                   <div className="space-y-0.5 pt-1 pl-1.5 pr-0.5 animate-in fade-in slide-in-from-top-1 duration-150">
                     {group.items.map((item) => {
                       const Icon = item.icon;
-                      const isActive =
-                        pathname === item.href ||
-                        (item.href !== "/admin" && pathname.startsWith(item.href));
+                      const isActive = navMatch(item.href, pathname, query, group.items.map((i) => i.href));
 
                       return (
                         <Link
@@ -577,7 +620,7 @@ function AdminLayoutContent({
                 const title = lang === "en" ? group.groupTitle.en : group.groupTitle.fr;
                 const isCollapsed = Boolean(collapsedGroups[group.id]);
                 const hasActiveChild = group.items.some(
-                  (item) => pathname === item.href || (item.href !== "/admin" && pathname.startsWith(item.href))
+                  (item) => navMatch(item.href, pathname, query, [])
                 );
 
                 return (
@@ -606,7 +649,7 @@ function AdminLayoutContent({
                       <div className="space-y-0.5 pt-1 pl-1">
                         {group.items.map((item) => {
                           const Icon = item.icon;
-                          const isActive = pathname === item.href;
+                          const isActive = navMatch(item.href, pathname, query, group.items.map((i) => i.href));
                           return (
                             <Link
                               key={item.href + item.title}

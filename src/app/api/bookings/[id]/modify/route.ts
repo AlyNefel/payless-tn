@@ -3,9 +3,8 @@ import connectDB from "@/lib/db";
 import { Booking, Vehicle, Customer, Location } from "@/models";
 import { sendEmail } from "@/lib/email";
 import { formatDate } from "@/lib/utils";
-import { computeRentalDays, extraLineTotal, onlySelected } from "@/lib/extras";
-import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
-import { getRentalRules, priceSource } from "@/lib/rentalRules";
+import { computeRentalDays } from "@/lib/extras";
+import { quoteBookingDates } from "@/lib/rentalQuote";
 import { notifyStaff } from "@/lib/notify";
 import { revalidateAssignments } from "@/lib/fleetUnits";
 import { getVehicleStockAvailability } from "@/lib/availability";
@@ -70,6 +69,13 @@ export async function POST(
     const isPending = booking.bookingStatus === "pending";
     const isConfirmed = booking.bookingStatus === "confirmed";
 
+    // A rental split between two cars (car change by the agency) can only be changed by the agency.
+    if ((booking.vehicleChanges || []).length > 0) {
+      return NextResponse.json(
+        { success: false, error: "Votre véhicule a été changé par l'agence : contactez-nous pour modifier cette réservation." },
+        { status: 409 }
+      );
+    }
     if (!isPending && !isConfirmed) {
       return NextResponse.json(
         {
@@ -97,6 +103,11 @@ export async function POST(
     const datesChanged =
       newPickupDate.getTime() !== new Date(booking.pickupDate).getTime() ||
       newReturnDate.getTime() !== new Date(booking.returnDate).getTime();
+    // Same rules as a new booking: price of the period, minimum duration of the model and period.
+    const quote = datesChanged ? await quoteBookingDates(booking, newPickupDate, newReturnDate) : null;
+    if (quote?.minError) {
+      return NextResponse.json({ success: false, error: quote.minError }, { status: 400 });
+    }
     if (datesChanged) {
       const wanted = new Map<string, number>();
       for (const mId of modelsOfBooking(booking as never)) wanted.set(mId, (wanted.get(mId) || 0) + 1);
@@ -121,27 +132,27 @@ export async function POST(
       const oldReturnDateStr = formatDate(booking.returnDate, "fr-FR");
 
       // Recalculate duration & price with the same rules as the booking wizard / booking API.
-      const oldRentalDays = booking.rentalDuration;
       const newRentalDays = computeRentalDays(newPickupDate, newReturnDate);
 
-      const vehicle = booking.vehicleId as unknown as { pricing?: { daily: number } } | null;
       let newTotal = booking.pricingBreakdown.totalAmount;
       let newSubtotal = booking.pricingBreakdown.subtotal;
       let newContribution = booking.pricingBreakdown.contributionLF2026 || 0;
 
-      if (vehicle?.pricing && newRentalDays !== oldRentalDays) {
-        const isoDay = (d: Date) => d.toISOString().slice(0, 10);
-        newSubtotal = calculateSeasonalRentalTotal(priceSource(vehicle, await getRentalRules()), isoDay(newPickupDate), isoDay(newReturnDate)).subtotal;
-        const perDayContribution = oldRentalDays > 0 ? Math.round(newContribution / oldRentalDays) : 200;
-        newContribution = perDayContribution * newRentalDays;
-        const extrasTotal = onlySelected(booking.extras).reduce(
-          (acc, ex) => acc + extraLineTotal(ex.price || 0, ex.quantity || 1, newRentalDays, ex.pricingType),
-          0
-        );
-        const pb = booking.pricingBreakdown;
-        const fees = (pb.timbreFiscal ?? 100) + (pb.pickupLocationFee || 0) + (pb.returnLocationFee || 0) + (pb.differentLocationFee || 0);
-        newTotal = Math.max(0, newSubtotal + extrasTotal + fees + newContribution - (pb.discountAmount || 0));
-        booking.pricingBreakdown.extrasTotal = extrasTotal;
+      // Re-priced whenever the dates move (not only when the number of days changes): moving a
+      // low-season booking into high season must not keep the low-season price.
+      if (quote) {
+        newSubtotal = quote.subtotal;
+        newContribution = quote.contribution;
+        newTotal = quote.total;
+        booking.pricingBreakdown.extrasTotal = quote.extrasTotal;
+        booking.pricingBreakdown.dailyRate = quote.lines[0]?.dailyRate ?? booking.pricingBreakdown.dailyRate;
+        (booking.vehicles || []).forEach((v, i) => {
+          if (quote.lines[i]) {
+            v.dailyRate = quote.lines[i].dailyRate;
+            v.subtotal = quote.lines[i].subtotal;
+          }
+        });
+        booking.markModified("vehicles");
       }
 
       booking.pickupDate = newPickupDate;

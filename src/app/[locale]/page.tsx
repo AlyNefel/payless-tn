@@ -13,7 +13,6 @@ import { TrustSection } from "@/components/home/TrustSection";
 import { getTrustStats } from "@/lib/trustStats";
 import { RentalSteps } from "@/components/home/RentalSteps";
 import { PromotionsBanner } from "@/components/home/PromotionsBanner";
-import { Testimonials } from "@/components/home/Testimonials";
 import { FAQSection } from "@/components/home/FAQSection";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
@@ -69,9 +68,6 @@ export default async function HomePage({
 
       {/* 6. Seasonal promotion */}
       <PromotionsBanner />
-
-      {/* 7. Guest testimonials */}
-      <Testimonials />
 
       {/* 8. Trust: real figures, commitments, final booking CTA */}
       <TrustSection locale={locale} stats={trustStats} settings={settings} />

@@ -8,6 +8,8 @@ export interface SeasonalPriceRule {
   endMonth?: number;   // 1 to 12 (5 = May, etc.)
   dailyRate: number;   // in millimes/cents (or DT if stored normalized)
   discountPercent?: number; // discount applied during this period (0-100)
+  /** Minimum rental days for a rental starting in this period (0 = the model's minimum). */
+  minDays?: number;
 }
 
 /**
@@ -27,6 +29,21 @@ export interface GlobalSeason {
   /** Minimum rental days for a rental starting in the period (0 = no specific minimum). */
   minDays?: number;
   active?: boolean;
+}
+
+/** Fleet-wide degressive tariff: from `minDays` days of rental, `percent` % off the daily rate. */
+export interface DurationDiscount {
+  minDays: number;
+  percent: number;
+}
+
+/** Best discount tier reached by a rental of `days` days (0 when none). */
+export function durationDiscountPercent(days: number, tiers: DurationDiscount[] | undefined | null): number {
+  let best = 0;
+  for (const t of tiers || []) {
+    if (days >= Number(t.minDays) && Number(t.percent) > best) best = Number(t.percent);
+  }
+  return Math.max(0, Math.min(90, best));
 }
 
 /** Calendar day "YYYY-MM-DD" of a date or string — never shifted by the browser time zone. */
@@ -92,8 +109,46 @@ export function matchGlobalSeason(date: Date | string | undefined, seasons: Glob
  */
 export function minDaysFor(vehicle: any, pickupDate?: Date | string): number {
   const own = Number(vehicle?.minRentalDays || vehicle?.pricing?.minRentalDays || 1) || 1;
-  const season = matchGlobalSeason(pickupDate, vehicle?.pricing?.globalSeasons);
-  return Math.max(1, own, Number(season?.minDays || 0));
+  // The model's own period (the one that sets the price) can require more days.
+  const seasons: SeasonalPriceRule[] = vehicle?.pricing?.seasonalPrices || [];
+  const period = pickupDate ? seasons.find((s) => isDateInSeason(dayKey(pickupDate), s)) : undefined;
+  const legacy = matchGlobalSeason(pickupDate, vehicle?.pricing?.globalSeasons);
+  return Math.max(1, own, Number(period?.minDays || 0), Number(legacy?.minDays || 0));
+}
+
+/** Calendar days ("MM-DD" for a yearly period, "YYYY-MM-DD" for fixed dates) covered by a rule. */
+function ruleDays(rule: SeasonalPriceRule): { yearly: Set<string>; fixed: Set<string> } {
+  const yearly = new Set<string>();
+  const fixed = new Set<string>();
+  const md = (d: Date) => d.toISOString().slice(5, 10);
+  if (rule.startDate && rule.endDate && rule.startDate.length >= 10 && rule.endDate.length >= 10) {
+    for (let t = Date.parse(`${rule.startDate.slice(0, 10)}T00:00:00Z`), end = Date.parse(`${rule.endDate.slice(0, 10)}T00:00:00Z`), n = 0; t <= end && n < 800; t += 86_400_000, n++) {
+      fixed.add(new Date(t).toISOString().slice(0, 10));
+    }
+    return { yearly, fixed };
+  }
+  // Leap year: every MM-DD exists.
+  for (let t = Date.UTC(2028, 0, 1); t < Date.UTC(2029, 0, 1); t += 86_400_000) {
+    if (isDateInSeason(new Date(t), rule)) yearly.add(md(new Date(t)));
+  }
+  return { yearly, fixed };
+}
+
+/** Pairs of periods of one model that cover the same day (the first one would silently win). */
+export function overlappingPeriods(rules: SeasonalPriceRule[]): [number, number][] {
+  const days = rules.map(ruleDays);
+  const out: [number, number][] = [];
+  for (let i = 0; i < rules.length; i++)
+    for (let j = i + 1; j < rules.length; j++) {
+      const a = days[i];
+      const b = days[j];
+      const clash =
+        [...a.yearly].some((d) => b.yearly.has(d)) ||
+        [...a.fixed].some((d) => b.fixed.has(d) || b.yearly.has(d.slice(5))) ||
+        [...b.fixed].some((d) => a.yearly.has(d.slice(5)));
+      if (clash) out.push([i, j]);
+    }
+  return out;
 }
 
 /** Per-vehicle rule or fleet-wide period that sets the price on this day (for display). */
@@ -140,6 +195,21 @@ export function getVehicleEffectiveDailyRate(vehicle: any, dateOrStr?: Date | st
 }
 
 /**
+ * Daily rate of a model for days starting on `day`: the period in force that day (the model's own
+ * periods), then the model's degressive tariff for a rental of `totalDays` days. Used for the days
+ * added by an extension and for the days covered by a new car after a car change.
+ */
+export function rateOn(vehicle: any, day: Date | string, totalDays: number): number {
+  let rate = getVehicleEffectiveDailyRate(vehicle, dayKey(day));
+  const pct = durationDiscountPercent(totalDays, vehicle?.pricing?.durationDiscounts);
+  if (pct > 0 && rate > 0) {
+    const unit = rate >= 1000 ? 100 : 1;
+    rate = Math.max(unit, Math.round((rate * (1 - pct / 100)) / unit) * unit);
+  }
+  return rate;
+}
+
+/**
  * Computes the total rental subtotal.
  *
  * Price guarantee: the daily rate in force on the PICKUP day is locked for the
@@ -152,7 +222,7 @@ export function calculateSeasonalRentalTotal(
   vehicle: any,
   pickupDate: string,
   returnDate: string
-): { subtotal: number; averageDailyRate: number; days: number } {
+): { subtotal: number; averageDailyRate: number; days: number; discountPercent?: number } {
   if (!vehicle || !pickupDate || !returnDate) {
     return { subtotal: 0, averageDailyRate: 0, days: 1 };
   }
@@ -160,8 +230,14 @@ export function calculateSeasonalRentalTotal(
   const start = dayKey(pickupDate);
   const days = computeRentalDays(pickupDate, returnDate);
 
-  const lockedDailyRate = getVehicleEffectiveDailyRate(vehicle, start);
+  let lockedDailyRate = getVehicleEffectiveDailyRate(vehicle, start);
+  // Degressive tariff: longer rentals get a lower daily rate (kept on whole dinars).
+  const discountPercent = durationDiscountPercent(days, vehicle.pricing?.durationDiscounts);
+  if (discountPercent > 0 && lockedDailyRate > 0) {
+    const unit = lockedDailyRate >= 1000 ? 100 : 1;
+    lockedDailyRate = Math.max(unit, Math.round((lockedDailyRate * (1 - discountPercent / 100)) / unit) * unit);
+  }
   const subtotal = lockedDailyRate * days;
 
-  return { subtotal, averageDailyRate: lockedDailyRate, days };
+  return { subtotal, averageDailyRate: lockedDailyRate, days, discountPercent };
 }

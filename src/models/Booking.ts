@@ -87,6 +87,38 @@ export interface IAssignedUnit {
   auto: boolean;
   assignedAt: Date;
   assignedBy?: string;
+  /**
+   * Segment of the rental this car covers. Empty = whole rental. After a car change the
+   * replaced car keeps [pickup, to) and the new one covers [from, return).
+   */
+  from?: Date;
+  to?: Date;
+}
+
+/** One car change during a rental (breakdown, upgrade, customer request…). */
+export interface IVehicleChange {
+  at: Date;
+  by: string;
+  lineIndex: number;
+  effectiveDate: Date;
+  fromVehicleId: mongoose.Types.ObjectId;
+  fromModel: string;
+  fromUnitId?: mongoose.Types.ObjectId;
+  fromLabel?: string;
+  toVehicleId: mongoose.Types.ObjectId;
+  toModel: string;
+  toUnitId?: mongoose.Types.ObjectId;
+  toLabel?: string;
+  priceMode: "recalculate" | "keep";
+  oldDailyRate: number;
+  newDailyRate: number;
+  daysChanged: number;
+  /** Change of the rental total (minor units, negative = cheaper for the customer). */
+  amount: number;
+  oldCarMileage?: number;
+  newCarMileage?: number;
+  reason: string;
+  customerNotified?: boolean;
 }
 
 export interface IDriverIdentity {
@@ -192,6 +224,7 @@ export interface IBooking extends Document {
   pickupInspection?: IInspection;
   returnInspection?: IInspection;
   remindersSent?: string[];
+  vehicleChanges?: IVehicleChange[];
   extensions?: { previousReturnDate: Date; newReturnDate: Date; extraDays: number; dailyRate: number; amount: number; at: Date; by?: string }[];
   cancellationReason?: string;
   rejectionReason?: string;
@@ -348,6 +381,33 @@ const BookingSchema = new Schema<IBooking>(
         auto: { type: Boolean, default: true },
         assignedAt: { type: Date, default: Date.now },
         assignedBy: String,
+        from: Date,
+        to: Date,
+      },
+    ],
+    vehicleChanges: [
+      {
+        at: Date,
+        by: String,
+        lineIndex: Number,
+        effectiveDate: Date,
+        fromVehicleId: { type: Schema.Types.ObjectId, ref: "Vehicle" },
+        fromModel: String,
+        fromUnitId: Schema.Types.ObjectId,
+        fromLabel: String,
+        toVehicleId: { type: Schema.Types.ObjectId, ref: "Vehicle" },
+        toModel: String,
+        toUnitId: Schema.Types.ObjectId,
+        toLabel: String,
+        priceMode: { type: String, enum: ["recalculate", "keep"] },
+        oldDailyRate: Number,
+        newDailyRate: Number,
+        daysChanged: Number,
+        amount: Number,
+        oldCarMileage: Number,
+        newCarMileage: Number,
+        reason: String,
+        customerNotified: Boolean,
       },
     ],
     pickupRecordedAt: Date,

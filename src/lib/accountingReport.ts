@@ -29,6 +29,8 @@ export interface AccountingSummary {
   monthly: { month: string; collected: number; expenses: number; invoiced: number }[];
   vehicles: { vehicleId: string; name: string; units: number; bookings: number; rentedDays: number; occupancy: number; revenue: number; expenses: number; margin: number }[];
   receivables: { bookingId: string; reference: string; customer: string; phone: string; total: number; paid: number; remaining: number; returnDate: Date; status: string }[];
+  /** Customers who paid more than the (new) total after a car change or a shortened rental. */
+  refundsDue: { bookingId: string; reference: string; customer: string; phone: string; total: number; paid: number; due: number }[];
   deposits: { bookingId: string; reference: string; customer: string; held: number; status: string; returnDate: Date }[];
   topCustomers: { customer: string; bookings: number; revenue: number }[];
   agents: { agent: string; collected: number; count: number }[];
@@ -163,7 +165,27 @@ export async function buildSummary(from: Date, to: Date, fromStr: string, toStr:
     })
     .filter((r) => r.remaining > 0)
     .sort((a, b) => b.remaining - a.remaining);
-  const deposits = open
+  // Cancelled or refused bookings keep nothing: every dinar still held is owed back (or must be
+  // recorded as a cancellation fee). They were invisible in every report before.
+  const cancelledWithMoney = await Booking.find({
+    bookingStatus: { $in: ["cancelled", "rejected"] },
+    $or: [{ amountPaid: { $gt: 0 } }, { depositHeld: { $gt: 0 } }],
+  })
+    .populate("customerId", "firstName lastName phone")
+    .select("bookingReference customerId pricingBreakdown.totalAmount amountPaid depositHeld returnDate bookingStatus paymentStatus")
+    .lean();
+  const refundsDue = [
+    ...cancelledWithMoney.map((b) => ({ ...b, pricingBreakdown: { totalAmount: 0 } })),
+    ...open,
+  ]
+    .filter((b) => (b.amountPaid || 0) > (b.pricingBreakdown?.totalAmount || 0))
+    .map((b) => {
+      const c = b.customerId as unknown as Cust;
+      const total = b.pricingBreakdown?.totalAmount || 0;
+      return { bookingId: String(b._id), reference: b.bookingReference, customer: name(c), phone: c?.phone || "", total, paid: b.amountPaid || 0, due: (b.amountPaid || 0) - total };
+    })
+    .sort((a, b) => b.due - a.due);
+  const deposits = [...open, ...cancelledWithMoney]
     .filter((b) => (b.depositHeld || 0) > 0)
     .map((b) => ({ bookingId: String(b._id), reference: b.bookingReference, customer: name(b.customerId as unknown as Cust), held: b.depositHeld || 0, status: b.bookingStatus, returnDate: b.returnDate }));
 
@@ -208,6 +230,7 @@ export async function buildSummary(from: Date, to: Date, fromStr: string, toStr:
     monthly,
     vehicles: vehicleRows.sort((a, b) => b.revenue - a.revenue),
     receivables: receivables.slice(0, 200),
+    refundsDue,
     deposits,
     topCustomers: [...customers].map(([customer, v]) => ({ customer, ...v })).sort((a, b) => b.revenue - a.revenue).slice(0, 10),
     agents: [...agents].map(([agent, v]) => ({ agent, ...v })).sort((a, b) => b.collected - a.collected),

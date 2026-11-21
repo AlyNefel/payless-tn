@@ -50,20 +50,34 @@ export default function AdminDashboardPage() {
   const [searchTable, setSearchTable] = useState("");
 
   useEffect(() => {
-    fetch("/api/admin/bookings?limit=200")
-      .then((res) => res.json())
-      .then((json) => {
-        if (json.success && Array.isArray(json.bookings)) {
-          setBookings(
-            json.bookings.map((b: any) => ({
-              ...b,
-              totalPrice: b.totalAmount >= 1000 ? Math.round(b.totalAmount / 100) : b.totalAmount,
-              rentalDays: b.rentalDuration || 1,
-            }))
-          );
+    // Every booking of the chart window (12 months → day after tomorrow), page by page, plus every
+    // car on the road: the figures no longer depend on how many bookings were created recently.
+    (async () => {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      const from = iso(new Date(now.getFullYear(), now.getMonth() - 11, 1));
+      const to = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2));
+      const all = new Map<string, any>();
+      try {
+        for (let page = 1; page <= 25; page++) {
+          const json = await fetch(`/api/admin/bookings?dateField=pickup&from=${from}&to=${to}&limit=200&page=${page}`).then((r) => r.json());
+          for (const b of json.bookings || []) all.set(b._id, b);
+          if (!json.success || (json.bookings || []).length < 200) break;
         }
-      })
-      .catch(() => {});
+        const active = await fetch("/api/admin/bookings?status=active&limit=200").then((r) => r.json());
+        for (const b of active.bookings || []) all.set(b._id, b);
+        setBookings(
+          [...all.values()].map((b: any) => ({
+            ...b,
+            totalPrice: b.totalAmount >= 1000 ? Math.round(b.totalAmount / 100) : b.totalAmount,
+            rentalDays: b.rentalDuration || 1,
+          }))
+        );
+      } catch {
+        /* dashboard stays empty */
+      }
+    })();
 
     fetch("/api/admin/vehicles?limit=200")
       .then((res) => (res.ok ? res.json() : { vehicles: [] }))

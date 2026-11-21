@@ -3,7 +3,7 @@ import Booking from "@/models/Booking";
 import Vehicle from "@/models/Vehicle";
 import mongoose from "mongoose";
 import { rentableUnitCount } from "./fleetUnits";
-import { HOLDING_STATUSES, modelsOfBooking, overlapFilter, reallyOverlaps } from "./bookingOverlap";
+import { HOLDING_STATUSES, assignmentOverlaps, modelsOfBooking, overlapFilter, reallyOverlaps } from "./bookingOverlap";
 
 /** Statuses that hold a car (kept for backwards compatibility of imports). */
 export const ACTIVE_STATUSES = HOLDING_STATUSES;
@@ -36,7 +36,7 @@ async function windowUsage(
     filter.$and = [{ $or: [{ vehicleId: id }, { "vehicles.vehicleId": id }] }];
   }
   const bookings = await Booking.find(filter)
-    .select("vehicleId vehicles.vehicleId pickupDate returnDate bookingStatus assignedUnits.unitId assignedUnits.vehicleId")
+    .select("vehicleId vehicles.vehicleId pickupDate returnDate bookingStatus assignedUnits.unitId assignedUnits.vehicleId assignedUnits.from assignedUnits.to")
     .lean();
 
   const busyUnits = new Set<string>();
@@ -46,8 +46,9 @@ async function windowUsage(
     const perModelAssigned = new Map<string, number>();
     for (const a of b.assignedUnits || []) {
       if (!a.unitId) continue;
-      busyUnits.add(String(a.unitId));
-      perModelAssigned.set(String(a.vehicleId), (perModelAssigned.get(String(a.vehicleId)) || 0) + 1);
+      // After a car change each car is busy only during its own part of the rental.
+      if (assignmentOverlaps(b, a, pickupDate, returnDate)) busyUnits.add(String(a.unitId));
+      if (!a.to) perModelAssigned.set(String(a.vehicleId), (perModelAssigned.get(String(a.vehicleId)) || 0) + 1);
     }
     const wanted = new Map<string, number>();
     for (const modelId of modelsOfBooking(b)) wanted.set(modelId, (wanted.get(modelId) || 0) + 1);
