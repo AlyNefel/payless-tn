@@ -371,11 +371,11 @@ export default function AdminPricingPage() {
 
                 {/* Seasonal Periods List */}
                 <div className="p-5 sm:p-6 space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-amber-500" />
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                        Périodes Spéciales & Tarifs Saisonniers
+                        Périodes & tarifs saisonniers
                       </h3>
                       <span className="text-[11px] font-semibold text-slate-400">
                         ({seasons.length} configurée{seasons.length > 1 ? "s" : ""})
