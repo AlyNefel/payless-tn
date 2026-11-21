@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import { ChangeVehicleDialog } from "@/components/admin/ChangeVehicleDialog";
 import { usePermissions } from "@/components/admin/ui/usePermissions";
 import {
   KeyRound,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   MessageCircle,
   X,
+  Car,
 } from "lucide-react";
 
 export interface UnitOption {
@@ -29,12 +31,15 @@ interface AssignedUnit {
   unitId?: string;
   licensePlate: string;
   auto?: boolean;
+  from?: string;
+  to?: string;
 }
 
 interface Props {
   bookingId: string;
   bookingReference: string;
   bookingStatus: string;
+  pickupDate: string;
   returnDate: string;
   returnTime?: string;
   pickupMileage?: number;
@@ -64,6 +69,9 @@ export function BookingOperationsPanel(props: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [modal, setModal] = useState<null | "pickup" | "return" | "extend" | "note">(null);
+  const [changing, setChanging] = useState(false);
+  const [notifyCustomer, setNotifyCustomer] = useState(true);
+  const [whatsappUrl, setWhatsappUrl] = useState<string | null>(null);
   const [toGarage, setToGarage] = useState(false);
   const [mileage, setMileage] = useState("");
   const [notes, setNotes] = useState("");
@@ -101,7 +109,10 @@ export function BookingOperationsPanel(props: Props) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Opération refusée");
-      setMsg({ ok: true, text: typeof okText === "string" ? okText : "OK" });
+      const m = data.money as { remaining?: number; refundDue?: number } | undefined;
+      const money = m ? (m.refundDue ? ` · à rembourser au client : ${(m.refundDue / 100).toFixed(3)} DT` : m.remaining ? ` · reste à encaisser : ${(m.remaining / 100).toFixed(3)} DT` : "") : "";
+      setWhatsappUrl(data.customer?.whatsappUrl || null);
+      setMsg({ ok: true, text: `${typeof okText === "string" ? okText : "OK"}${money}${data.customer?.emailSent ? " · client prévenu par e-mail" : ""}` });
       setModal(null);
       setMileage("");
       setNotes("");
@@ -121,7 +132,7 @@ export function BookingOperationsPanel(props: Props) {
     return props.models.map((m) => {
       const idx = seen.get(m.vehicleId) || 0;
       seen.set(m.vehicleId, idx + 1);
-      const assigned = props.assignedUnits.filter((a) => String(a.vehicleId) === m.vehicleId)[idx];
+      const assigned = props.assignedUnits.filter((a) => !a.to && String(a.vehicleId) === m.vehicleId)[idx];
       return { ...m, index: idx, assigned };
     });
   }, [props.models, props.assignedUnits]);
@@ -264,6 +275,14 @@ export function BookingOperationsPanel(props: Props) {
           </button>
           <button
             type="button"
+            disabled={!canExtend || busy !== null}
+            onClick={() => setChanging(true)}
+            className={`${btn} sm:col-span-3 bg-violet-600 hover:bg-violet-500 text-white`}
+          >
+            <Car className="w-4 h-4" /> Changer de voiture (panne, surclassement…)
+          </button>
+          <button
+            type="button"
             disabled={busy !== null}
             onClick={() => setModal("note")}
             className={`${btn} sm:col-span-3 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200`}
@@ -271,6 +290,31 @@ export function BookingOperationsPanel(props: Props) {
             Ajouter une note interne
           </button>
         </div>
+      )}
+
+      {whatsappUrl && (
+        <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" className={`${btn} w-full bg-emerald-600 hover:bg-emerald-500 text-white`}>
+          Envoyer le message au client sur WhatsApp
+        </a>
+      )}
+
+      {changing && (
+        <ChangeVehicleDialog
+          open
+          onClose={() => setChanging(false)}
+          onDone={(text, wa) => {
+            setChanging(false);
+            setMsg({ ok: true, text });
+            setWhatsappUrl(wa);
+            props.onChanged();
+          }}
+          bookingId={props.bookingId}
+          bookingStatus={props.bookingStatus}
+          pickupDate={props.pickupDate}
+          returnDate={props.returnDate}
+          pickupMileage={props.pickupMileage}
+          lines={props.models.map((m) => ({ vehicleId: m.vehicleId, label: m.label }))}
+        />
       )}
 
       {modal && (
@@ -352,6 +396,11 @@ export function BookingOperationsPanel(props: Props) {
             )}
 
             <div className="flex justify-end gap-2 pt-2 sticky bottom-0 bg-white dark:bg-[#0f141f]">
+              {modal === "extend" && (
+                <label className="flex items-center gap-2 mr-auto font-semibold text-slate-700 dark:text-slate-200">
+                  <input type="checkbox" checked={notifyCustomer} onChange={(e) => setNotifyCustomer(e.target.checked)} /> Prévenir le client
+                </label>
+              )}
               <button type="button" onClick={() => setModal(null)} className={`${btn} bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300`}>
                 Annuler
               </button>
@@ -373,6 +422,7 @@ export function BookingOperationsPanel(props: Props) {
                         newReturnTime: newReturnTime || undefined,
                         dailyRateTND: canPrice && extraDays > 0 && dailyRate !== "" ? Number(dailyRate) : undefined,
                         notes: notes || undefined,
+                        notifyCustomer,
                       },
                       extraDays > 0 ? `Location prolongée de ${extraDays} jour(s)` : extraDays < 0 ? `Durée réduite de ${-extraDays} jour(s)` : "Heure de retour modifiée"
                     );

@@ -157,6 +157,29 @@ export function DashboardTab({ period, refreshKey }: { period: Period; refreshKe
         </div>
       </div>
 
+      {s.refundsDue.length > 0 && (
+        <div className={`${cardCls} overflow-hidden border-amber-300 dark:border-amber-800`}>
+          <h3 className="p-4 pb-1 text-sm font-bold text-amber-700 dark:text-amber-300">À rembourser aux clients ({s.refundsDue.length})</h3>
+          <p className="px-4 pb-2 text-[11px] text-slate-500">Le client a payé plus que le nouveau total (voiture moins chère, location raccourcie). Enregistrez le remboursement dans Encaissements.</p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[480px]">
+              <thead><tr><th className={thCls}>Réservation</th><th className={thCls}>Client</th><th className={`${thCls} text-right`}>Payé</th><th className={`${thCls} text-right`}>Total</th><th className={`${thCls} text-right`}>À rembourser</th></tr></thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {s.refundsDue.map((r) => (
+                  <tr key={r.bookingId}>
+                    <td className={tdCls}><a className="font-bold text-blue-600 hover:underline" href={`/admin/bookings/${r.bookingId}`}>{r.reference}</a></td>
+                    <td className={tdCls}>{r.customer}<div className="text-[11px] text-slate-500">{r.phone}</div></td>
+                    <td className={`${tdCls} text-right tabular-nums whitespace-nowrap`}>{dt(r.paid)}</td>
+                    <td className={`${tdCls} text-right tabular-nums whitespace-nowrap`}>{dt(r.total)}</td>
+                    <td className={`${tdCls} text-right font-black tabular-nums text-amber-600 whitespace-nowrap`}>{dt(r.due)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className={`${cardCls} overflow-hidden`}>
         <h3 className="p-4 pb-1 text-sm font-bold text-slate-900 dark:text-white">Rentabilité par véhicule</h3>
         <p className="px-4 pb-2 text-[11px] text-slate-500">Chiffre d&apos;affaires des locations démarrées sur la période, moins les dépenses rattachées au véhicule et les coûts saisis au garage.</p>

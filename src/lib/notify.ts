@@ -347,7 +347,7 @@ async function doRunFleetAlerts(): Promise<number> {
     for (const b of bookings) {
       const veh = b.vehicleId as unknown as { brand?: string; model?: string } | null;
       const name = veh ? `${veh.brand} ${veh.model}` : "Véhicule";
-      const plates = (b.assignedUnits || []).map((a) => a.licensePlate).filter(Boolean).join(", ");
+      const plates = (b.assignedUnits || []).filter((a) => !a.to).map((a) => a.licensePlate).filter(Boolean).join(", ");
       const carLabel = plates ? `${name} (${plates})` : name;
       const link = `/admin/bookings/${b._id}`;
       const ref = b.bookingReference;

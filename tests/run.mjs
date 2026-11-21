@@ -16,7 +16,7 @@ const filter = process.argv[2] || "";
 const PORT = Number(process.env.TEST_PORT || 3999);
 const URL_ = `http://127.0.0.1:${PORT}`;
 // Order matters a little: the repair test rewrites assignments made by the earlier files.
-const ORDER = ["assignment", "availability", "pricing-rules", "price-lock", "worker", "rbac", "accounting", "additions", "legacy-repair"];
+const ORDER = ["assignment", "availability", "pricing-rules", "price-lock", "worker", "rbac", "accounting", "additions", "vehicle-change", "legacy-repair"];
 const files = readdirSync(join(root, "tests"))
   .filter((f) => f.endsWith(".test.mjs") && f.includes(filter))
   .sort((a, b) => {
@@ -102,7 +102,7 @@ for (const f of files) {
   const fails = lines.filter((l) => l.startsWith("FAIL"));
   const passes = lines.filter((l) => l.startsWith("PASS")).length;
   // Quiet on success, full detail on failure.
-  if (out.code !== 0 || fails.length || passes === 0) {
+  if (out.code !== 0 || fails.length || passes === 0 || process.env.VERBOSE) {
     failedFiles++;
     console.log(out.text.trim());
     console.log(`✗ ${f}: ${fails.length} failed, ${passes} passed${out.code ? ` (exit ${out.code})` : ""}`);

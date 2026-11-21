@@ -94,7 +94,8 @@ export async function contractData(booking: IBooking): Promise<ContractData> {
   const [company, money, settings] = await Promise.all([getCompanyInfo(), bookingMoney(String(booking._id), pb.totalAmount || 0), getPublicSettings()]);
   const v = p.vehicleId;
   const lines = booking.vehicles && booking.vehicles.length ? booking.vehicles : [{ vehicleId: booking.vehicleId, brand: v?.brand, model: v?.model }];
-  const plates = booking.assignedUnits || [];
+  // Current cars (a car replaced during the rental is listed in the change history).
+  const plates = (booking.assignedUnits || []).filter((a) => !a.to);
   const cars = lines.map((l, i) => {
     const plate = plates.filter((a) => String(a.vehicleId) === String((l as { vehicleId?: unknown }).vehicleId))[
       lines.slice(0, i).filter((x) => String((x as { vehicleId?: unknown }).vehicleId) === String((l as { vehicleId?: unknown }).vehicleId)).length
@@ -173,11 +174,30 @@ export async function invoiceData(booking: IBooking): Promise<InvoiceData> {
   const days = pb.rentalDays || booking.rentalDuration;
   const v = p.vehicleId;
   const cars = booking.vehicles && booking.vehicles.length ? booking.vehicles : [{ brand: v?.brand, model: v?.model, dailyRate: pb.dailyRate, subtotal: pb.subtotal }];
-  const lines: InvoiceData["lines"] = cars.map((c) => {
-    const x = c as { brand?: string; model?: string; dailyRate?: number; subtotal?: number };
-    const total = x.subtotal ?? Math.round(pb.subtotal / cars.length);
-    return { label: `Location ${x.brand || ""} ${x.model || ""}`.trim(), qty: `${days} j`, unit: Math.round(total / Math.max(1, days)), total };
-  });
+  // A rental split by a car change is invoiced per car: days with the first car, then with the next.
+  const changes = (booking.vehicleChanges || []).filter((c) => c.daysChanged < days || c.priceMode === "recalculate");
+  let lines: InvoiceData["lines"];
+  if (cars.length === 1 && changes.length > 0) {
+    lines = [];
+    let remainingDays = days;
+    const segs = [...changes].sort((a, b) => new Date(a.effectiveDate).getTime() - new Date(b.effectiveDate).getTime());
+    // From the last change back to the start.
+    const parts: { label: string; days: number; daily: number }[] = [];
+    for (let k = segs.length - 1; k >= 0; k--) {
+      const c = segs[k];
+      const d = Math.min(remainingDays, c.daysChanged);
+      parts.unshift({ label: `Location ${c.toModel} (à partir du ${new Date(c.effectiveDate).toLocaleDateString("fr-FR", { timeZone: "UTC" })})`, days: d, daily: c.newDailyRate });
+      remainingDays -= d;
+    }
+    if (remainingDays > 0) parts.unshift({ label: `Location ${segs[0].fromModel}`, days: remainingDays, daily: segs[0].oldDailyRate });
+    for (const p of parts) if (p.days > 0) lines.push({ label: p.label, qty: `${p.days} j`, unit: p.daily, total: p.daily * p.days });
+  } else {
+    lines = cars.map((c) => {
+      const x = c as { brand?: string; model?: string; dailyRate?: number; subtotal?: number };
+      const total = x.subtotal ?? Math.round(pb.subtotal / cars.length);
+      return { label: `Location ${x.brand || ""} ${x.model || ""}`.trim(), qty: `${days} j`, unit: Math.round(total / Math.max(1, days)), total };
+    });
+  }
   // Extensions added after the booking are part of the subtotal: one balancing line keeps the invoice exact.
   const carsTotal = lines.reduce((a, l) => a + l.total, 0);
   if (pb.subtotal !== carsTotal) lines.push({ label: "Ajustement de durée (prolongation / réduction)", qty: "1", unit: pb.subtotal - carsTotal, total: pb.subtotal - carsTotal });

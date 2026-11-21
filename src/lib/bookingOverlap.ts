@@ -67,3 +67,38 @@ export function modelsOfBooking(b: {
   const id = String((b.vehicleId as { _id?: unknown })?._id || b.vehicleId || "");
   return id ? [id] : [];
 }
+
+type Seg = { from?: Date | string | null; to?: Date | string | null };
+type BookingDates = { bookingStatus?: string; pickupDate: Date | string; returnDate: Date | string };
+
+/** A car that was replaced during the rental: it only covered the start of it. */
+export function isClosedSegment(a: Seg): boolean {
+  return Boolean(a.to);
+}
+
+/**
+ * Period during which one assigned car is with this booking. A car assigned for the whole rental
+ * covers [pickup, effective return); after a car change the old one stops at `to` and the new one
+ * starts at `from`.
+ */
+export function assignmentWindow(b: BookingDates, a: Seg): { start: Date; end: Date } {
+  const pickup = new Date(b.pickupDate);
+  const start = a.from && new Date(a.from) > pickup ? new Date(a.from) : pickup;
+  const end = a.to ? new Date(Math.min(new Date(a.to).getTime(), effectiveReturn(b).getTime())) : effectiveReturn(b);
+  return { start, end };
+}
+
+/** Same as assignmentWindow but on the booked dates (no overdue extension): used for day holds. */
+export function assignmentBookedWindow(b: BookingDates, a: Seg): { start: Date; end: Date } {
+  const pickup = new Date(b.pickupDate);
+  const ret = new Date(b.returnDate);
+  const start = a.from && new Date(a.from) > pickup ? new Date(a.from) : pickup;
+  const end = a.to && new Date(a.to) < ret ? new Date(a.to) : ret;
+  return { start, end };
+}
+
+/** True when this car is with the booking at some point of [from, to). */
+export function assignmentOverlaps(b: BookingDates, a: Seg, from: Date, to: Date): boolean {
+  const w = assignmentWindow(b, a);
+  return w.start < to && w.end > from && w.end > w.start;
+}

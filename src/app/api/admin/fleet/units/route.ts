@@ -5,7 +5,7 @@ import { Vehicle, Booking, MaintenanceRecord, InsurancePolicy } from "@/models";
 import { requirePermission } from "@/lib/permissions";
 import { z } from "zod";
 import { ensureAllUnits, ensureHoldsBackfilled, reassignBookingsOfUnit, unitLabel } from "@/lib/fleetUnits";
-import { HOLDING_STATUSES, effectiveReturn } from "@/lib/bookingOverlap";
+import { HOLDING_STATUSES, assignmentBookedWindow, effectiveReturn } from "@/lib/bookingOverlap";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +56,8 @@ export async function GET(request: NextRequest) {
     returnTime?: string;
     totalAmount: number;
     late: boolean;
+    /** Car changed during the rental: "replaced" (first part) or "replacement" (second part). */
+    segment?: "replaced" | "replacement";
   };
   const byUnit = new Map<string, Row[]>();
   const unassignedByModel = new Map<string, Row[]>();
@@ -76,9 +78,19 @@ export async function GET(request: NextRequest) {
       late: b.bookingStatus === "active" && new Date(b.returnDate) < now,
     };
     const assigned = (b.assignedUnits || []).filter((a) => a.unitId);
-    for (const a of assigned) byUnit.set(String(a.unitId), [...(byUnit.get(String(a.unitId)) || []), row]);
+    for (const a of assigned) {
+      // After a car change each car shows only its own part of the rental (calendar, current rental).
+      const w = assignmentBookedWindow(b, a);
+      if (w.end <= w.start) continue;
+      const seg: Row = a.from || a.to
+        ? { ...row, pickupDate: w.start.toISOString().slice(0, 10), returnDate: w.end.toISOString().slice(0, 10), segment: a.to ? "replaced" : "replacement" }
+        : row;
+      // A replaced car whose segment is over is free again.
+      if (a.to && effectiveReturn({ bookingStatus: "completed", returnDate: w.end }) <= now && b.bookingStatus === "active") continue;
+      byUnit.set(String(a.unitId), [...(byUnit.get(String(a.unitId)) || []), seg]);
+    }
     const wanted = b.vehicles?.length || 1;
-    if (assigned.length < wanted) {
+    if (assigned.filter((a) => !a.to).length < wanted) {
       const mId = String((b.vehicleId as unknown as mongoose.Types.ObjectId) || "");
       unassignedByModel.set(mId, [...(unassignedByModel.get(mId) || []), row]);
     }
@@ -228,7 +240,8 @@ export async function DELETE(request: NextRequest) {
   if ((v.units || []).length <= 1) {
     return NextResponse.json({ success: false, error: "C'est le dernier véhicule de ce modèle : archivez le modèle à la place." }, { status: 409 });
   }
-  const onRoad = await Booking.findOne({ bookingStatus: "active", "assignedUnits.unitId": uid }).select("bookingReference").lean();
+  // Only the car currently with the customer counts (a car replaced during the rental is back).
+  const onRoad = await Booking.findOne({ bookingStatus: "active", assignedUnits: { $elemMatch: { unitId: uid, to: { $exists: false } } } }).select("bookingReference").lean();
   if (onRoad) {
     return NextResponse.json({ success: false, error: `Ce véhicule est actuellement en location (${onRoad.bookingReference}).` }, { status: 409 });
   }

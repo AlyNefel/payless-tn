@@ -23,6 +23,7 @@ interface Money {
   total: number;
   paid: number;
   remaining: number;
+  refundDue?: number;
   depositHeld: number;
   paymentStatus: string;
 }
@@ -62,7 +63,7 @@ export function BookingPayments({ bookingId, onChanged, compact }: { bookingId: 
   }, [load]);
 
   // Suggested amount for the chosen movement.
-  const suggestion = !money ? 0 : kind === "payment" ? money.remaining : kind === "deposit" ? Math.max(0, depositDue - money.depositHeld) : kind === "refund" ? money.paid : money.depositHeld;
+  const suggestion = !money ? 0 : kind === "payment" ? money.remaining : kind === "deposit" ? Math.max(0, depositDue - money.depositHeld) : kind === "refund" ? (money.refundDue || money.paid) : money.depositHeld;
   const canOut = can("payments.delete");
 
   const submit = async () => {
@@ -103,7 +104,9 @@ export function BookingPayments({ bookingId, onChanged, compact }: { bookingId: 
           {[
             ["Total", dt(money.total), "text-slate-900 dark:text-white"],
             ["Encaissé", dt(money.paid), "text-emerald-600"],
-            ["Reste à payer", dt(money.remaining), money.remaining > 0 ? "text-red-600" : "text-emerald-600"],
+            money.refundDue
+              ? ["À rembourser au client", dt(money.refundDue), "text-amber-600"]
+              : ["Reste à payer", dt(money.remaining), money.remaining > 0 ? "text-red-600" : "text-emerald-600"],
             ["Caution détenue", `${dt(money.depositHeld)}${depositDue ? ` / ${dt(depositDue)}` : ""}`, "text-blue-600"],
           ].map(([l, v, c]) => (
             <div key={l} className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 min-w-0">

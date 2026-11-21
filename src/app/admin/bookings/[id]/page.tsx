@@ -123,8 +123,21 @@ interface PopulatedBooking {
     processedBy?: string;
     processedAt?: string;
   };
-  assignedUnits?: Array<{ vehicleId: string; unitId?: string; licensePlate: string; auto?: boolean }>;
+  assignedUnits?: Array<{ vehicleId: string; unitId?: string; licensePlate: string; auto?: boolean; from?: string; to?: string }>;
   pickupMileage?: number;
+  vehicleChanges?: {
+    at: string;
+    by: string;
+    effectiveDate: string;
+    fromModel: string;
+    fromLabel?: string;
+    toModel: string;
+    toLabel?: string;
+    priceMode: "recalculate" | "keep";
+    amount: number;
+    reason: string;
+    customerNotified?: boolean;
+  }[];
   pickupInspection?: InspectionValue | null;
   returnInspection?: InspectionValue | null;
   returnMileage?: number;
@@ -151,8 +164,6 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
   const [status, setStatus] = useState<string>("pending");
   const [paymentStatus, setPaymentStatus] = useState<string>("unpaid");
   const [internalNotes, setInternalNotes] = useState("");
-  const [availableVehicles, setAvailableVehicles] = useState<Array<{ _id: string; brand: string; model: string; year: number }>>([]);
-  const [selectedVehicleId, setSelectedVehicleId] = useState("");
   const [modDecisionLoading, setModDecisionLoading] = useState(false);
   const [modDecisionNotes, setModDecisionNotes] = useState("");
 
@@ -168,7 +179,6 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
         setStatus(data.booking.bookingStatus || "pending");
         setPaymentStatus(data.booking.paymentStatus || "unpaid");
         setInternalNotes(data.booking.internalNotes || "");
-        setSelectedVehicleId(data.booking.vehicleId?._id || "");
       } else {
         setError(data.error || "Réservation introuvable");
       }
@@ -188,15 +198,7 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
 
   useEffect(() => {
     fetchBooking();
-    // Fetch fleet list for vehicle reassignment
-    fetch("/api/vehicles?limit=50")
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.vehicles) {
-          setAvailableVehicles(res.vehicles);
-        }
-      })
-      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const handleUpdate = async () => {
@@ -211,7 +213,6 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
           status,
           paymentStatus,
           internalNotes,
-          vehicleId: selectedVehicleId || undefined,
         }),
       });
       const data = await res.json();
@@ -441,6 +442,7 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
         bookingId={booking._id}
         bookingReference={booking.bookingReference}
         bookingStatus={booking.bookingStatus}
+        pickupDate={booking.pickupDate}
         returnDate={booking.returnDate}
         returnTime={booking.returnTime}
         pickupMileage={booking.pickupMileage}
@@ -657,7 +659,7 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
                   const vBrand = vItem.brand || vObj?.brand || "Véhicule";
                   const vModel = vItem.model || vObj?.model || "";
                   const vPlate =
-                    (booking.assignedUnits || []).filter((a) => String(a.vehicleId) === String(vObj?._id || ""))[
+                    (booking.assignedUnits || []).filter((a) => !a.to && String(a.vehicleId) === String(vObj?._id || ""))[
                       booking.vehicles!.slice(0, idx).filter((x) => String((typeof x.vehicleId === "object" ? x.vehicleId?._id : x.vehicleId) || "") === String(vObj?._id || "")).length
                     ]?.licensePlate || "À assigner au comptoir";
                   return (
@@ -701,38 +703,43 @@ export default function BookingDetailPage({ params }: { params: Promise<{ id: st
                       {booking.vehicleId?.brand} {booking.vehicleId?.model} ({booking.vehicleId?.year || 2024})
                     </h3>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      Matricule: <span className="font-mono font-semibold">{booking.assignedUnits?.[0]
-                        ? booking.assignedUnits[0].licensePlate || "Affecté (immat. à saisir dans la flotte)"
+                      Matricule: <span className="font-mono font-semibold">{(booking.assignedUnits || []).find((a) => !a.to)
+                        ? (booking.assignedUnits || []).find((a) => !a.to)?.licensePlate || "Affecté (immat. à saisir dans la flotte)"
                         : "À assigner au comptoir"}</span>
                     </p>
                   </div>
                 </div>
 
-                {/* Reassign Vehicle Dropdown */}
-                <div className="w-full sm:w-auto">
-                  <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                    Changer de modèle :
-                  </label>
-                  <select
-                    value={selectedVehicleId}
-                    onChange={(e) => setSelectedVehicleId(e.target.value)}
-                    className="w-full sm:w-56 h-9 px-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-900 dark:text-white"
-                  >
-                    <option value={booking.vehicleId?._id || ""}>
-                      {booking.vehicleId ? `${booking.vehicleId.brand} ${booking.vehicleId.model}` : "Sélectionner..."}
-                    </option>
-                    {availableVehicles
-                      .filter((v) => v._id !== booking.vehicleId?._id)
-                      .map((v) => (
-                        <option key={v._id} value={v._id}>
-                          {v.brand} {v.model} ({v.year})
-                        </option>
-                      ))}
-                  </select>
-                </div>
+                {/* Car change: done from "Changer de voiture" (price difference + customer notified). */}
+                <p className="text-[11px] text-slate-500 sm:max-w-[14rem]">
+                  Pour changer de voiture (panne, surclassement…), utilisez <b>« Changer de voiture »</b> dans le panneau Opérations : le prix et le client sont mis à jour.
+                </p>
               </div>
             )}
           </div>
+
+          {(booking.vehicleChanges || []).length > 0 && (
+            <div className="p-5 rounded-2xl bg-white dark:bg-[#0f141f] border border-violet-200 dark:border-violet-900/60 shadow-xs space-y-3">
+              <h2 className="text-xs font-bold uppercase tracking-wider text-violet-600 dark:text-violet-300">Changements de voiture</h2>
+              <ul className="space-y-2">
+                {(booking.vehicleChanges || []).map((c, k) => (
+                  <li key={k} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-xs">
+                    <div className="font-bold text-slate-900 dark:text-white">
+                      {c.fromModel}{c.fromLabel ? ` (${c.fromLabel})` : ""} → {c.toModel}{c.toLabel ? ` (${c.toLabel})` : ""}
+                    </div>
+                    <div className="text-slate-500 mt-0.5">
+                      À partir du {new Date(c.effectiveDate).toLocaleDateString("fr-FR", { timeZone: "UTC" })} · {c.reason} ·{" "}
+                      {c.priceMode === "keep" ? "prix conservé" : `${c.amount >= 0 ? "+" : "−"}${(Math.abs(c.amount) / 100).toFixed(3)} DT`}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      {new Date(c.at).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })} · {c.by}
+                      {c.customerNotified ? " · client prévenu" : ""}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Dates & Locations Card */}
           <div className="p-5 rounded-2xl bg-white dark:bg-[#0f141f] border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">

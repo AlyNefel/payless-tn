@@ -4,7 +4,7 @@ import Vehicle, { type IVehicleUnit } from "@/models/Vehicle";
 import Booking from "@/models/Booking";
 import UnitHold from "@/models/UnitHold";
 import AgencySetting from "@/models/AgencySetting";
-import { HOLDING_STATUSES, overlapFilter, reallyOverlaps } from "./bookingOverlap";
+import { HOLDING_STATUSES, assignmentBookedWindow, assignmentOverlaps, overlapFilter, reallyOverlaps } from "./bookingOverlap";
 
 /**
  * Physical fleet ("units"): one car model (Vehicle) owns N physical cars, each with its own
@@ -115,7 +115,10 @@ async function busyUnitIds(
   const busy = new Set<string>();
   for (const b of overlapping) {
     for (const a of b.assignedUnits || []) {
-      if (String(a.vehicleId) === String(vehicleId) && a.unitId) busy.add(String(a.unitId));
+      // After a car change, each car is only busy during its own part of the rental.
+      if (String(a.vehicleId) === String(vehicleId) && a.unitId && assignmentOverlaps(b, a, pickupDate, returnDate)) {
+        busy.add(String(a.unitId));
+      }
     }
   }
   return busy;
@@ -163,11 +166,21 @@ export function holdDays(pickup: Date | string, ret: Date | string): string[] {
   return days;
 }
 
+/** Days of one assigned car (its segment of the rental). Empty when the segment is empty. */
+export function segmentDays(
+  b: { pickupDate: Date | string; returnDate: Date | string },
+  a: { from?: Date | string | null; to?: Date | string | null }
+): string[] {
+  const w = assignmentBookedWindow(b, a);
+  if (holdDays(w.start, w.start)[0] >= holdDays(w.end, w.end)[0]) return [];
+  return holdDays(w.start, w.end);
+}
+
 /**
  * Atomically reserves a physical car for a booking on the given days.
  * Returns false (and leaves nothing behind) when any day is already held by another booking.
  */
-async function claimUnit(bookingId: string, vehicleId: string, unitId: string, days: string[]): Promise<boolean> {
+export async function claimUnit(bookingId: string, vehicleId: string, unitId: string, days: string[]): Promise<boolean> {
   const bId = new mongoose.Types.ObjectId(bookingId);
   const uId = new mongoose.Types.ObjectId(unitId);
   const existing = await UnitHold.find({ unitId: uId, day: { $in: days } }).select("day bookingId").lean();
@@ -247,22 +260,49 @@ export async function syncBookingAssignment(
   const kept: NonNullable<typeof booking.assignedUnits> = [];
   const dropped: string[] = [];
   const usedUnits = new Set<string>();
+  /** unit id → days it must stay held by this booking. */
+  const wanted = new Map<string, Set<string>>();
+  const want = (uid: string, list: string[]) => {
+    const set = wanted.get(uid) || new Set<string>();
+    list.forEach((d) => set.add(d));
+    wanted.set(uid, set);
+  };
   const unitsCache = new Map<string, IVehicleUnit[]>();
   const unitsOf = async (modelId: string) => {
     if (!unitsCache.has(modelId)) unitsCache.set(modelId, await ensureUnits(modelId));
     return unitsCache.get(modelId)!;
   };
+  // Start of the current car of a model after a car change (auto-assignment keeps it).
+  const startOf = new Map<string, Date>();
+  for (const c of booking.vehicleChanges || []) {
+    const prev = startOf.get(String(c.toVehicleId));
+    if (!prev || new Date(c.effectiveDate) > prev) startOf.set(String(c.toVehicleId), new Date(c.effectiveDate));
+  }
 
-  // Release days / cars that are no longer wanted before claiming (dates shortened, model changed).
+  // Release days that are outside the rental (dates shortened).
   await UnitHold.deleteMany({ bookingId: bId, day: { $nin: days } });
 
-  for (const a of booking.assignedUnits || []) {
+  // 1. Cars replaced during the rental: history, kept as they are for their own segment.
+  for (const a of (booking.assignedUnits || []).filter((x) => x.to)) {
+    const segDays = segmentDays(booking, a);
+    if (!a.unitId || segDays.length === 0) continue;
+    const uid = String(a.unitId);
+    await claimUnit(bookingId, String(a.vehicleId), uid, segDays);
+    want(uid, segDays);
+    kept.push(a);
+  }
+
+  // 2. Current cars.
+  for (const a of (booking.assignedUnits || []).filter((x) => !x.to)) {
     const modelId = String(a.vehicleId);
     const uid = String(a.unitId || "");
-    const keptForModel = kept.filter((k) => String(k.vehicleId) === modelId).length;
+    if (a.from && !startOf.has(modelId)) startOf.set(modelId, new Date(a.from));
+    const keptForModel = kept.filter((k) => !k.to && String(k.vehicleId) === modelId).length;
     const unit = uid ? (await unitsOf(modelId)).find((u) => String(u._id) === uid) : undefined;
+    const segDays = segmentDays(booking, a);
     const valid =
       Boolean(unit) &&
+      segDays.length > 0 &&
       keptForModel < (needed.get(modelId) || 0) &&
       !usedUnits.has(uid) &&
       // A car already with the customer stays assigned even if flagged for the garage.
@@ -271,13 +311,13 @@ export async function syncBookingAssignment(
     if (valid) {
       // During a repair the hold table (rebuilt oldest first) is the only referee: the stored
       // assignment of a newer, conflicting booking must not evict the older one.
-      const busy = opts.holdsOnly
-        ? new Set<string>()
-        : await busyUnitIds(modelId, booking.pickupDate, booking.returnDate, bookingId);
-      ok = !busy.has(uid) && (await claimUnit(bookingId, modelId, uid, days));
+      const w = assignmentBookedWindow(booking, a);
+      const busy = opts.holdsOnly ? new Set<string>() : await busyUnitIds(modelId, w.start, w.end, bookingId);
+      ok = !busy.has(uid) && (await claimUnit(bookingId, modelId, uid, segDays));
     }
     if (ok) {
       usedUnits.add(uid);
+      want(uid, segDays);
       kept.push({
         vehicleId: a.vehicleId,
         unitId: a.unitId,
@@ -285,21 +325,26 @@ export async function syncBookingAssignment(
         auto: a.auto,
         assignedAt: a.assignedAt,
         assignedBy: a.assignedBy,
+        ...(a.from ? { from: a.from } : {}),
       });
     } else {
       dropped.push(a.licensePlate || unitLabel(unit));
-      if (uid) await UnitHold.deleteMany({ bookingId: bId, unitId: a.unitId });
     }
   }
 
+  // 3. Missing cars: auto-assigned (free car, lowest mileage) for the right part of the rental.
   let unassigned = 0;
   for (const [modelId, count] of needed) {
-    let have = kept.filter((k) => String(k.vehicleId) === modelId).length;
+    let have = kept.filter((k) => !k.to && String(k.vehicleId) === modelId).length;
     if (have >= count) continue;
+    const from = startOf.get(modelId);
+    const seg = from && from > new Date(booking.pickupDate) ? { from } : {};
+    const w = assignmentBookedWindow(booking, seg);
+    const segDays = segmentDays(booking, seg);
     const units = await unitsOf(modelId);
-    const busy = await busyUnitIds(modelId, booking.pickupDate, booking.returnDate, bookingId);
+    const busy = await busyUnitIds(modelId, w.start, w.end, bookingId);
     // Cars returned or leaving the same day as this rental are used last: fewer tight hand-overs.
-    const tight = await sameDayNeighbours(bookingId, modelId, booking.pickupDate, booking.returnDate);
+    const tight = await sameDayNeighbours(bookingId, modelId, w.start, booking.returnDate);
     const tightUnits = new Set(tight.map((t) => t.unitId));
     const candidates = units
       .filter((u) => u.status === "active" && !busy.has(String(u._id)) && !usedUnits.has(String(u._id)))
@@ -310,30 +355,32 @@ export async function syncBookingAssignment(
     for (const unit of candidates) {
       if (have >= count) break;
       const uid = String(unit._id);
-      if (!(await claimUnit(bookingId, modelId, uid, days))) continue;
+      if (!(await claimUnit(bookingId, modelId, uid, segDays))) continue;
       usedUnits.add(uid);
+      want(uid, segDays);
       kept.push({
         vehicleId: new mongoose.Types.ObjectId(modelId),
         unitId: unit._id,
         licensePlate: unit.licensePlate || "",
         auto: true,
         assignedAt: new Date(),
+        ...seg,
       });
       have++;
     }
     unassigned += count - have;
   }
 
-  // Holds of cars this booking no longer uses.
-  await UnitHold.deleteMany({
-    bookingId: bId,
-    unitId: { $nin: kept.map((k) => k.unitId).filter((x): x is mongoose.Types.ObjectId => Boolean(x)) },
-  });
+  // Holds this booking no longer needs: cars it lost, days outside each car's segment.
+  await UnitHold.deleteMany({ bookingId: bId, unitId: { $nin: [...wanted.keys()].map((u) => new mongoose.Types.ObjectId(u)) } });
+  for (const [uid, set] of wanted) {
+    await UnitHold.deleteMany({ bookingId: bId, unitId: new mongoose.Types.ObjectId(uid), day: { $nin: [...set] } });
+  }
 
   await Booking.updateOne({ _id: bId }, { $set: { assignedUnits: kept } });
   await notifySameDayTurnover(booking, kept, unitsCache).catch((e) => console.error("notifySameDayTurnover:", e));
   return {
-    assigned: kept.map((a) => ({ vehicleId: String(a.vehicleId), unitId: a.unitId ? String(a.unitId) : undefined, licensePlate: a.licensePlate })),
+    assigned: kept.filter((a) => !a.to).map((a) => ({ vehicleId: String(a.vehicleId), unitId: a.unitId ? String(a.unitId) : undefined, licensePlate: a.licensePlate })),
     dropped,
     unassigned,
   };
@@ -456,7 +503,8 @@ export async function canKeepUnitsUntil(bookingId: string, newReturn: Date): Pro
   if (!booking) return { ok: false };
   const extraDays = holdDays(booking.returnDate, newReturn);
   for (const a of booking.assignedUnits || []) {
-    if (!a.unitId) continue;
+    // A car replaced during the rental is not concerned by an extension.
+    if (!a.unitId || a.to) continue;
     const uid = String(a.unitId);
     const busy = await busyUnitIds(String(a.vehicleId), booking.returnDate, newReturn, bookingId);
     if (busy.has(uid) || !(await unitFreeOn(bookingId, uid, extraDays))) {
@@ -485,14 +533,20 @@ export async function assignUnitManually(
   if (!unit) return { ok: false, error: "Véhicule introuvable" };
   if (unit.status !== "active") return { ok: false, error: "Ce véhicule est en maintenance ou hors service" };
   const taken = `${unitLabel(unit)} est déjà affecté à une autre réservation sur ces dates`;
-  const busy = await busyUnitIds(vehicleId, booking.pickupDate, booking.returnDate, bookingId);
+  const all = [...(booking.assignedUnits || [])];
+  // Only current cars can be replaced here; a replaced car (segment closed) is history.
+  const current = all.map((a, i) => ({ a, i })).filter(({ a }) => !a.to && String(a.vehicleId) === vehicleId);
+  const replaced = current[index]?.a;
+  const seg = replaced?.from ? { from: replaced.from } : {};
+  const w = assignmentBookedWindow(booking, seg);
+  const busy = await busyUnitIds(vehicleId, w.start, w.end, bookingId);
   if (busy.has(unitId)) return { ok: false, error: taken };
   // The database decides: the claim fails if another booking holds this car on any day.
-  if (!(await claimUnit(bookingId, vehicleId, unitId, holdDays(booking.pickupDate, booking.returnDate)))) {
+  if (!(await claimUnit(bookingId, vehicleId, unitId, segmentDays(booking, seg)))) {
     return { ok: false, error: taken };
   }
-  const list = [...(booking.assignedUnits || [])].filter((a) => String(a.unitId || "") !== unitId);
-  const sameModel = list.map((a, i) => ({ a, i })).filter(({ a }) => String(a.vehicleId) === vehicleId);
+  const list = all.filter((a) => a.to || String(a.unitId || "") !== unitId);
+  const sameModel = list.map((a, i) => ({ a, i })).filter(({ a }) => !a.to && String(a.vehicleId) === vehicleId);
   const entry = {
     vehicleId: new mongoose.Types.ObjectId(vehicleId),
     unitId: unit._id,
@@ -500,6 +554,7 @@ export async function assignUnitManually(
     auto: false,
     assignedAt: new Date(),
     assignedBy: by,
+    ...seg,
   };
   if (sameModel[index]) list[sameModel[index].i] = entry;
   else list.push(entry);
@@ -544,17 +599,18 @@ export async function auditAssignments(): Promise<IntegrityReport> {
   const unitName = new Map<string, string>();
   for (const v of vehicles) (v.units || []).forEach((u, i) => unitName.set(String(u._id), `${v.brand} ${v.model} — ${unitLabel(u, i)}`));
 
-  const byUnit = new Map<string, typeof bookings>();
+  const byUnit = new Map<string, { ref: string; days: Set<string> }[]>();
   const orphanAssignments: string[] = [];
   const unassigned: string[] = [];
   for (const b of bookings) {
     const wanted = b.vehicles?.length || 1;
     const got = (b.assignedUnits || []).filter((a) => a.unitId);
-    if (got.length < wanted) unassigned.push(b.bookingReference);
+    if (got.filter((a) => !a.to).length < wanted) unassigned.push(b.bookingReference);
     for (const a of got) {
       const uid = String(a.unitId);
-      if (!unitName.has(uid)) orphanAssignments.push(b.bookingReference);
-      byUnit.set(uid, [...(byUnit.get(uid) || []), b]);
+      // A replaced car that was deleted afterwards is history, not an anomaly.
+      if (!unitName.has(uid) && !a.to) orphanAssignments.push(b.bookingReference);
+      byUnit.set(uid, [...(byUnit.get(uid) || []), { ref: b.bookingReference, days: new Set(segmentDays(b, a)) }]);
     }
   }
   const conflicts: IntegrityReport["conflicts"] = [];
@@ -562,10 +618,10 @@ export async function auditAssignments(): Promise<IntegrityReport> {
     const clash = new Set<string>();
     for (let i = 0; i < list.length; i++)
       for (let j = i + 1; j < list.length; j++) {
-        const A = new Set(holdDays(list[i].pickupDate, list[i].returnDate));
-        if (holdDays(list[j].pickupDate, list[j].returnDate).some((d) => A.has(d))) {
-          clash.add(list[i].bookingReference);
-          clash.add(list[j].bookingReference);
+        if (list[i].ref === list[j].ref) continue;
+        if ([...list[j].days].some((d) => list[i].days.has(d))) {
+          clash.add(list[i].ref);
+          clash.add(list[j].ref);
         }
       }
     if (clash.size) conflicts.push({ unit: unitName.get(uid) || uid, bookings: [...clash] });

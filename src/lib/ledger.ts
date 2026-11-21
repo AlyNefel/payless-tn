@@ -24,6 +24,8 @@ export interface BookingMoney {
   total: number;
   paid: number;
   remaining: number;
+  /** Paid more than the (new) total: amount owed back to the customer. */
+  refundDue: number;
   depositHeld: number;
   paymentStatus: "unpaid" | "partial" | "paid" | "refunded";
 }
@@ -38,7 +40,7 @@ export async function bookingMoney(bookingId: string, total: number): Promise<Bo
   const paid = (by.payment || 0) - (by.refund || 0);
   const depositHeld = (by.deposit || 0) - (by.deposit_refund || 0);
   const paymentStatus = paid <= 0 ? ((by.refund || 0) > 0 ? "refunded" : "unpaid") : paid >= total ? "paid" : "partial";
-  return { total, paid, remaining: Math.max(0, total - paid), depositHeld, paymentStatus };
+  return { total, paid, remaining: Math.max(0, total - paid), refundDue: Math.max(0, paid - total), depositHeld, paymentStatus };
 }
 
 /** Recomputes and stores the payment state of a booking. The ledger is the single source of truth. */
