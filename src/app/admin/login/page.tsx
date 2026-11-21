@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
+import { staffHome } from "@/lib/staffHome";
 import {
   ShieldCheck,
   Lock,
@@ -42,8 +43,7 @@ export default function AdminLoginPage() {
         let home = "/admin";
         try {
           const me = await fetch("/api/admin/me", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null));
-          if (me?.user?.role === "worker") home = "/admin/worker";
-          else if (me?.user?.role === "accountant") home = "/admin/accounting";
+          home = staffHome(me?.user?.role);
         } catch {
           /* keep the dashboard */
         }
