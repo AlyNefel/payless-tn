@@ -86,6 +86,8 @@ export async function GET(request: NextRequest) {
     const minPrice = searchParams.get("minPrice");
     const maxPrice = searchParams.get("maxPrice");
     const pickupDate = searchParams.get("pickupDate");
+    /** With dates: keep the cars with no free unit in the period (flagged isAvailable=false, listed last). */
+    const includeSoldOut = searchParams.get("includeSoldOut") === "1";
     const returnDate = searchParams.get("returnDate");
     const search = searchParams.get("search");
     const location = searchParams.get("location");
@@ -199,9 +201,10 @@ export async function GET(request: NextRequest) {
 
       if (!isNaN(pDate.getTime()) && !isNaN(rDate.getTime()) && rDate > pDate) {
         fleetStockMap = await getFleetStockMap(pDate, rDate);
-        // Exclude vehicles that have 0 units available during this date window
+        // Exclude vehicles that have 0 units available during this date window — unless the page
+        // asks to show them as "sold out for these dates" (includeSoldOut=1).
         const unavailableIds = Object.keys(fleetStockMap).filter((id) => !fleetStockMap[id].isAvailable);
-        if (unavailableIds.length > 0) {
+        if (unavailableIds.length > 0 && !includeSoldOut) {
           const unavailableObjectIds = unavailableIds
             .filter((id) => mongoose.Types.ObjectId.isValid(id))
             .map((id) => new mongoose.Types.ObjectId(id));
@@ -286,6 +289,10 @@ export async function GET(request: NextRequest) {
       );
       if (!["newest", "seats_desc"].includes(sort)) {
         processedVehicles.sort((a: any, b: any) => (sort === "price_desc" ? rate(b) - rate(a) : rate(a) - rate(b)));
+      }
+      // Sold-out cars (shown on request) always come after the cars that can be booked.
+      if (includeSoldOut) {
+        processedVehicles = [...processedVehicles.filter((v: any) => v.isAvailable), ...processedVehicles.filter((v: any) => !v.isAvailable)];
       }
       periodTotal = processedVehicles.length;
       processedVehicles = processedVehicles.slice(skip, skip + limit);

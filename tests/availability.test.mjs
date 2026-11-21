@@ -43,6 +43,17 @@ const b2 = await book([id, id], day(BASE + 1), day(BASE + 3)); // multi-car: sam
 log("multi-car booking (same model ×2) ok", b2.s === 201, b2.j.error || "");
 log("multi-car counted as 2 → stock 0", (await stockOf(id, P, R)) === 0, await stockOf(id, P, R));
 log("model hidden from listing for the window", !(await listed(id, P, R)));
+// Public site: sold-out models stay listed (disabled) when asked, after the available ones.
+{
+  const lst = (await pub(`/api/vehicles?limit=100&includeSoldOut=1&pickupDate=${P}&returnDate=${R}`)).vehicles || [];
+  const me = lst.find((v) => v._id === id);
+  log("includeSoldOut=1 lists the sold-out model", !!me);
+  log("…flagged isAvailable=false with 0 cars", me?.isAvailable === false && me?.availableUnits === 0, JSON.stringify({ a: me?.isAvailable, u: me?.availableUnits }));
+  const firstOut = lst.findIndex((v) => v.isAvailable === false);
+  log("…sold-out models listed after available ones", firstOut === -1 || lst.slice(firstOut).every((v) => v.isAvailable === false));
+  const later = (await pub(`/api/vehicles?limit=100&includeSoldOut=1&pickupDate=${day(BASE + 10)}&returnDate=${day(BASE + 12)}`)).vehicles.find((v) => v._id === id);
+  log("other dates → same model available again", later?.isAvailable === true && later?.availableUnits === 3, JSON.stringify({ a: later?.isAvailable, u: later?.availableUnits }));
+}
 const b3 = await book([id], day(BASE + 2), day(BASE + 3));
 log("4th booking refused (409)", b3.s === 409, b3.j.error || "");
 log("model visible for a later window", (await listed(id, day(BASE + 10), day(BASE + 12)))?.availableUnits === 3);

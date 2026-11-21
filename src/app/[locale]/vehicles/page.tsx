@@ -42,6 +42,8 @@ interface Vehicle {
   hasUSB?: boolean;
   totalUnits?: number;
   availableUnits?: number;
+  /** false = no free car of this model for the selected dates (shown, but cannot be booked). */
+  isAvailable?: boolean;
   description?: { fr: string; en: string; ar: string };
 }
 
@@ -120,14 +122,14 @@ function VehiclesContent() {
     return `/booking?${q.toString()}`;
   };
 
-  const fetchVehicles = useCallback(async () => {
+  const fetchVehicles = useCallback(async (silent = false) => {
     if (!datesValid) {
       setVehicles([]);
       setTotalCount(0);
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
@@ -139,9 +141,11 @@ function VehiclesContent() {
       if (pickupDate) params.set("pickupDate", pickupDate);
       if (returnDate) params.set("returnDate", returnDate);
       params.set("sort", sortBy);
-      params.set("limit", "50");
+      params.set("limit", "100");
+      // Sold-out models stay visible (disabled, "sold out for these dates"), after the available ones.
+      params.set("includeSoldOut", "1");
 
-      const res = await fetch(`/api/vehicles?${params.toString()}`);
+      const res = await fetch(`/api/vehicles?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
       const list = data.vehicles || data.data || [];
@@ -161,6 +165,25 @@ function VehiclesContent() {
   useEffect(() => {
     fetchVehicles();
   }, [fetchVehicles]);
+
+  // Availability changes while the customer browses (other bookings): refreshed silently when they
+  // come back to the tab and every minute. The booking itself is checked again by the server.
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") fetchVehicles(true);
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      window.clearInterval(timer);
+    };
+  }, [fetchVehicles]);
+
+  const soldOutCount = datesValid ? vehicles.filter((x) => x.isAvailable === false).length : 0;
+  const availableModels = totalCount - soldOutCount;
 
   const clearFilters = () => {
     setSearch(""); setTransmission(""); setFuelType("");
@@ -402,7 +425,9 @@ function VehiclesContent() {
           <p className="text-sm text-muted-foreground font-medium">
             {loading
               ? (locale === "fr" ? "Chargement des voitures..." : locale === "ar" ? "جار التحميل..." : "Loading vehicles...")
-              : `${totalCount} ${locale === "fr" ? `modèle${totalCount !== 1 ? "s" : ""} disponible${totalCount !== 1 ? "s" : ""}` : locale === "ar" ? "طراز متاح" : `model${totalCount !== 1 ? "s" : ""} available`} ${
+              : `${availableModels} ${locale === "fr" ? `modèle${availableModels !== 1 ? "s" : ""} disponible${availableModels !== 1 ? "s" : ""}` : locale === "ar" ? "طراز متاح" : `model${availableModels !== 1 ? "s" : ""} available`}${
+                  soldOutCount ? ` · ${soldOutCount} ${locale === "fr" ? `épuisé${soldOutCount > 1 ? "s" : ""}` : locale === "ar" ? "نفدت" : "sold out"}` : ""
+                } ${
                   datesValid
                     ? `${locale === "fr" ? "du" : locale === "ar" ? "من" : "from"} ${new Date(`${pickupDate}T12:00:00`).toLocaleDateString(locale === "ar" ? "ar-TN" : locale === "en" ? "en-GB" : "fr-FR", { day: "2-digit", month: "short" })} ${locale === "fr" ? "au" : locale === "ar" ? "إلى" : "to"} ${new Date(`${returnDate}T12:00:00`).toLocaleDateString(locale === "ar" ? "ar-TN" : locale === "en" ? "en-GB" : "fr-FR", { day: "2-digit", month: "short" })}`
                     : ""
@@ -453,8 +478,9 @@ function VehiclesContent() {
                 const dailyTND = getDailyTND(v);
                 const dailyEUR = Math.round(dailyTND / 3.35);
                 const depositTND = getDepositTND(v);
-                // The API only returns models with at least one free car for the period.
                 const availableCount = v.availableUnits ?? 0;
+                // No free car of this model for the chosen dates: shown, but cannot be booked.
+                const soldOut = datesValid && v.isAvailable === false;
 
                 return (
                   <motion.div
@@ -464,7 +490,10 @@ function VehiclesContent() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95 }}
                     transition={{ delay: idx * 0.03 }}
-                    className="bg-white dark:bg-[#0d0d0d] rounded-2xl border border-border/70 dark:border-neutral-800 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 overflow-hidden group flex flex-col justify-between charging-card"
+                    aria-disabled={soldOut || undefined}
+                    className={`bg-white dark:bg-[#0d0d0d] rounded-2xl border border-border/70 dark:border-neutral-800 shadow-sm overflow-hidden group flex flex-col justify-between transition-all duration-300 ${
+                      soldOut ? "opacity-70" : "hover:shadow-xl hover:-translate-y-1 charging-card"
+                    }`}
                   >
                     <div>
                       {/* Image Thumbnail */}
@@ -474,11 +503,17 @@ function VehiclesContent() {
                           alt={`${v.brand} ${v.model}`}
                           fill
                           sizes="(min-width: 1280px) 25vw, (min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw"
-                          className="object-contain p-3 group-hover:scale-105 transition-transform duration-500"
+                          className={`object-contain p-3 transition-transform duration-500 ${soldOut ? "grayscale" : "group-hover:scale-105"}`}
                         />
                         {/* Status badge */}
                         <div className="absolute top-3 left-3 flex items-center gap-1.5">
-                          {availableCount > 0 && (
+                          {soldOut && (
+                            <span className="text-white text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 shadow-md bg-red-600">
+                              <span className="w-1.5 h-1.5 rounded-full bg-white inline-block" />
+                              {locale === "ar" ? "نفدت في هذه التواريخ" : locale === "fr" ? "Épuisée à ces dates" : "Sold out for these dates"}
+                            </span>
+                          )}
+                          {!soldOut && availableCount > 0 && (
                             <span
                               className={`text-white text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1 shadow-md ${
                                 availableCount === 1 ? "bg-amber-500" : "bg-emerald-500"
@@ -498,7 +533,7 @@ function VehiclesContent() {
                         <div className="mb-3">
                           <h3 className="font-extrabold text-foreground text-lg leading-tight group-hover:text-amber-500 transition-colors">
                             {/* Crawlable link to the indexable vehicle page */}
-                            <Link href={`/vehicles/${v._id}`} className="hover:underline focus-visible:underline">
+                            <Link href={datesValid ? `/vehicles/${v._id}?pickupDate=${pickupDate}&returnDate=${returnDate}` : `/vehicles/${v._id}`} className="hover:underline focus-visible:underline">
                               {v.brand} {v.model}
                             </Link>
                           </h3>
@@ -564,7 +599,16 @@ function VehiclesContent() {
                             <span>{locale === "fr" ? "Détails" : locale === "ar" ? "تفاصيل" : "Details"}</span>
                           </button>
 
-                          {v.periodPricing && !v.periodPricing.meetsMinimum ? (
+                          {soldOut ? (
+                            <button
+                              type="button"
+                              disabled
+                              title={locale === "fr" ? "Choisissez d'autres dates" : locale === "ar" ? "اختر تواريخ أخرى" : "Choose other dates"}
+                              className="px-3 py-2 text-[11px] font-bold rounded-xl bg-muted dark:bg-neutral-800 text-muted-foreground cursor-not-allowed"
+                            >
+                              {locale === "fr" ? "Indisponible" : locale === "ar" ? "غير متاحة" : "Unavailable"}
+                            </button>
+                          ) : v.periodPricing && !v.periodPricing.meetsMinimum ? (
                             <span className="px-3 py-2 text-[11px] font-bold rounded-xl bg-muted dark:bg-neutral-800 text-muted-foreground text-center">
                               {locale === "fr" ? `Min. ${v.periodPricing.minDays} jours` : locale === "ar" ? `الحد الأدنى ${v.periodPricing.minDays} أيام` : `Min. ${v.periodPricing.minDays} days`}
                             </span>
@@ -763,14 +807,20 @@ function VehiclesContent() {
                   >
                     {locale === "fr" ? "Fermer" : locale === "ar" ? "إغلاق" : "Close"}
                   </button>
-                  <Link
-                    href={bookingHref(modalVehicle._id)}
-                    className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-black font-bold text-sm shadow-lg hover:shadow-amber-500/30 transition-all hover:-translate-y-0.5"
-                    style={{ background: "linear-gradient(135deg, #d4af37, #f5c842)" }}
-                  >
-                    <span>{locale === "fr" ? "Réserver ce véhicule" : locale === "ar" ? "احجز هذه السيارة" : "Book This Car"}</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </Link>
+                  {datesValid && modalVehicle.isAvailable === false ? (
+                    <span className="flex-1 sm:flex-initial inline-flex items-center justify-center px-6 py-2.5 rounded-xl bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300 font-bold text-sm">
+                      {locale === "fr" ? "Épuisée à ces dates — choisissez d'autres dates" : locale === "ar" ? "نفدت في هذه التواريخ" : "Sold out for these dates — choose other dates"}
+                    </span>
+                  ) : (
+                    <Link
+                      href={bookingHref(modalVehicle._id)}
+                      className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-black font-bold text-sm shadow-lg hover:shadow-amber-500/30 transition-all hover:-translate-y-0.5"
+                      style={{ background: "linear-gradient(135deg, #d4af37, #f5c842)" }}
+                    >
+                      <span>{locale === "fr" ? "Réserver ce véhicule" : locale === "ar" ? "احجز هذه السيارة" : "Book This Car"}</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </Link>
+                  )}
                 </div>
               </div>
             </motion.div>

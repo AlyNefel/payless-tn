@@ -139,6 +139,19 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
 
   // Exact availability for the chosen dates (same engine as the booking API).
   const [periodStock, setPeriodStock] = useState<{ available: number; checked: string } | null>(null);
+  // Re-checked when the customer comes back to the tab (another booking may have taken the last car).
+  const [stockTick, setStockTick] = useState(0);
+  useEffect(() => {
+    const again = () => document.visibilityState === "visible" && setStockTick((t) => t + 1);
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    const timer = window.setInterval(again, 60_000);
+    return () => {
+      window.removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", again);
+      window.clearInterval(timer);
+    };
+  }, []);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     if (q.get("pickupDate")) setPickupDate(q.get("pickupDate") || "");
@@ -151,7 +164,7 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
     }
     let alive = true;
     const key = `${pickupDate}|${returnDate}`;
-    fetch(`/api/vehicles/${vehicleId}?pickupDate=${pickupDate}&returnDate=${returnDate}`)
+    fetch(`/api/vehicles/${vehicleId}?pickupDate=${pickupDate}&returnDate=${returnDate}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         if (alive) setPeriodStock({ available: Number(d.vehicle?.availableUnits ?? 0), checked: key });
@@ -160,7 +173,7 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
     return () => {
       alive = false;
     };
-  }, [pickupDate, returnDate, vehicleId]);
+  }, [pickupDate, returnDate, vehicleId, stockTick]);
   const soldOutForPeriod = periodStock !== null && periodStock.available <= 0;
 
   const requiredMinDays = vehicle ? minDaysFor(withRules(vehicle as any), pickupDate || undefined) : 1;
@@ -254,7 +267,7 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
                       <Badge variant="secondary">{categoryName}</Badge>
                       {soldOutForPeriod ? (
                         <Badge variant="default" className="bg-red-500/20 text-red-400 border border-red-500/30">
-                          {locale === "ar" ? "غير متاحة لهذه التواريخ" : locale === "en" ? "Not available for these dates" : "Indisponible pour ces dates"}
+                          {locale === "ar" ? "نفدت في هذه التواريخ" : locale === "en" ? "Sold out for these dates" : "Épuisée à ces dates"}
                         </Badge>
                       ) : availableCount > 0 ? (
                         <Badge variant="default" className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
