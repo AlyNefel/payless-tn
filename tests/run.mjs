@@ -16,7 +16,7 @@ const filter = process.argv[2] || "";
 const PORT = Number(process.env.TEST_PORT || 3999);
 const URL_ = `http://127.0.0.1:${PORT}`;
 // Order matters a little: the repair test rewrites assignments made by the earlier files.
-const ORDER = ["assignment", "availability", "pricing-rules", "price-lock", "worker", "rbac", "accounting", "additions", "vehicle-change", "booking-filters", "legacy-repair"];
+const ORDER = ["assignment", "availability", "pricing-rules", "price-lock", "worker", "rbac", "accounting", "additions", "vehicle-change", "booking-filters", "date-changes", "legacy-repair"];
 const files = readdirSync(join(root, "tests"))
   .filter((f) => f.endsWith(".test.mjs") && f.includes(filter))
   .sort((a, b) => {

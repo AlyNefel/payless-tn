@@ -5,7 +5,7 @@ import { getFleetStockMap, stockWithoutDates } from "@/lib/availability";
 import { sanitizeVehicleForClient } from "@/lib/sanitize";
 import { escapeRegex, isStaffRequest } from "@/lib/apiAuth";
 import mongoose from "mongoose";
-import { applyRules, getRentalRules } from "@/lib/rentalRules";
+import { applyRules, getRentalRules, migrateGlobalPricingToModels } from "@/lib/rentalRules";
 import { calculateSeasonalRentalTotal, getVehicleEffectiveDailyRate, pricingPeriodName } from "@/lib/seasonalPricing";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +23,8 @@ export async function GET(request: NextRequest) {
     const isAdmin = await isStaffRequest();
     const visibility = isAdmin ? {} : PUBLIC_VEHICLE_FILTER;
 
+    // Old fleet-wide rules are copied into the models before any car is read.
+    await migrateGlobalPricingToModels();
     const vehicleId = searchParams.get("vehicleId") || searchParams.get("id");
     const brandParam = searchParams.get("brand");
     const modelParam = searchParams.get("model");

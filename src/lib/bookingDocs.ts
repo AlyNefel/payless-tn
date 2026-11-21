@@ -140,6 +140,9 @@ export async function contractData(booking: IBooking): Promise<ContractData> {
     paid: money.paid,
     out: insp(booking.pickupInspection, booking.pickupMileage),
     back: insp(booking.returnInspection, booking.returnMileage),
+    vehicleChanges: (booking.vehicleChanges || []).map(
+      (ch) => `Le ${new Date(ch.effectiveDate).toLocaleDateString("fr-FR", { timeZone: "UTC" })} : ${ch.fromModel}${ch.fromLabel ? ` (${ch.fromLabel})` : ""} → ${ch.toModel}${ch.toLabel ? ` (${ch.toLabel})` : ""}${ch.reason ? ` — ${ch.reason}` : ""}`
+    ),
     customerSignature: await signatureDataUrl(booking.pickupInspection?.signatureUrl),
     notes: booking.contract?.notes || undefined,
     minAge: Number(settings.minRentalAge) || 21,

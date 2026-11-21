@@ -85,7 +85,6 @@ const NAV_GROUPS: NavGroup[] = [
     icon: Car,
     items: [
       { title: "Car Model Manager", href: "/admin/fleet", icon: Car },
-      { title: "Tarifs par Période", href: "/admin/pricing", icon: Tag },
       { title: "Location Manager", href: "/admin/locations", icon: MapPin },
     ],
   },

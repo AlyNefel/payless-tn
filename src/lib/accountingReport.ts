@@ -165,7 +165,19 @@ export async function buildSummary(from: Date, to: Date, fromStr: string, toStr:
     })
     .filter((r) => r.remaining > 0)
     .sort((a, b) => b.remaining - a.remaining);
-  const refundsDue = open
+  // Cancelled or refused bookings keep nothing: every dinar still held is owed back (or must be
+  // recorded as a cancellation fee). They were invisible in every report before.
+  const cancelledWithMoney = await Booking.find({
+    bookingStatus: { $in: ["cancelled", "rejected"] },
+    $or: [{ amountPaid: { $gt: 0 } }, { depositHeld: { $gt: 0 } }],
+  })
+    .populate("customerId", "firstName lastName phone")
+    .select("bookingReference customerId pricingBreakdown.totalAmount amountPaid depositHeld returnDate bookingStatus paymentStatus")
+    .lean();
+  const refundsDue = [
+    ...cancelledWithMoney.map((b) => ({ ...b, pricingBreakdown: { totalAmount: 0 } })),
+    ...open,
+  ]
     .filter((b) => (b.amountPaid || 0) > (b.pricingBreakdown?.totalAmount || 0))
     .map((b) => {
       const c = b.customerId as unknown as Cust;
@@ -173,7 +185,7 @@ export async function buildSummary(from: Date, to: Date, fromStr: string, toStr:
       return { bookingId: String(b._id), reference: b.bookingReference, customer: name(c), phone: c?.phone || "", total, paid: b.amountPaid || 0, due: (b.amountPaid || 0) - total };
     })
     .sort((a, b) => b.due - a.due);
-  const deposits = open
+  const deposits = [...open, ...cancelledWithMoney]
     .filter((b) => (b.depositHeld || 0) > 0)
     .map((b) => ({ bookingId: String(b._id), reference: b.bookingReference, customer: name(b.customerId as unknown as Cust), held: b.depositHeld || 0, status: b.bookingStatus, returnDate: b.returnDate }));
 

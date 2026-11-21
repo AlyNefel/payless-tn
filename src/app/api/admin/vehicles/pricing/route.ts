@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { migrateGlobalPricingToModels } from "@/lib/rentalRules";
 import mongoose from "mongoose";
 import { z } from "zod";
 import { connectDB } from "@/lib/db";
@@ -53,6 +54,8 @@ export async function GET() {
   const guard = await requirePermission("pricing", "view");
   if (!guard.ok) return guard.response;
   try {
+    // Old fleet-wide rules are copied into the models before any car is read.
+    await migrateGlobalPricingToModels();
     await connectDB();
     const vehicles = await Vehicle.find({ status: { $ne: "archived" } })
       .select("brand model licensePlate category categoryId images pricing status minRentalDays")

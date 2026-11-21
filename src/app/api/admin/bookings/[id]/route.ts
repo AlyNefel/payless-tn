@@ -9,8 +9,7 @@ import { requirePermission } from "@/lib/permissions";
 import { withExtraIcons } from "@/lib/extrasServer";
 import mongoose from "mongoose";
 import { computeRentalDays, extraLineTotal, isPerDayPricing, onlySelected } from "@/lib/extras";
-import { calculateSeasonalRentalTotal } from "@/lib/seasonalPricing";
-import { getRentalRules, priceSource } from "@/lib/rentalRules";
+import { quoteBookingDates } from "@/lib/rentalQuote";
 import { bookingMoney, recordPayment, resyncAfterPriceChange } from "@/lib/ledger";
 import { logAudit } from "@/lib/audit";
 import { ChangeError, changeVehicle } from "@/lib/vehicleChange";
@@ -209,7 +208,13 @@ export async function PATCH(
         }
         if (nextPickup) updates.pickupDate = nextPickup;
         if (nextReturn) updates.returnDate = nextReturn;
-        if (nextPickup || nextReturn) updates.rentalDuration = computeRentalDays(p0, r0);
+        if (nextPickup || nextReturn) {
+          updates.rentalDuration = computeRentalDays(p0, r0);
+          // The price follows the dates (the agency may go below the minimum duration).
+          const q = await quoteBookingDates(currentBooking, p0, r0);
+          const pb = (currentBooking.pricingBreakdown as any).toObject ? (currentBooking.pricingBreakdown as any).toObject() : currentBooking.pricingBreakdown;
+          updates.pricingBreakdown = { ...pb, rentalDays: q.days, subtotal: q.subtotal, extrasTotal: q.extrasTotal, dailyRate: q.lines[0]?.dailyRate ?? pb.dailyRate, contributionLF2026: q.contribution, totalAmount: q.total };
+        }
       }
     }
 
@@ -263,37 +268,23 @@ export async function PATCH(
 
         // Recalculate duration & pricing if dates changed
         if (mod.pickupDate && mod.returnDate) {
-          // Same rules as the booking wizard: calendar days + price locked on the pickup-day period.
-          const days = computeRentalDays(mod.pickupDate, mod.returnDate);
-          updates.rentalDuration = days;
-          if (currentBooking.pricingBreakdown) {
-            const pb = (currentBooking.pricingBreakdown as any).toObject
-              ? (currentBooking.pricingBreakdown as any).toObject()
-              : currentBooking.pricingBreakdown;
-            const veh = currentBooking.vehicleId as unknown as { pricing?: { daily: number } } | null;
-            const iso = (d: Date) => new Date(d).toISOString().slice(0, 10);
-            const subtotal = veh?.pricing
-              ? calculateSeasonalRentalTotal(priceSource(veh, await getRentalRules()), iso(mod.pickupDate), iso(mod.returnDate)).subtotal
-              : pb.subtotal;
-            const extrasTotal = onlySelected(currentBooking.extras).reduce(
-              (acc, ex) => acc + extraLineTotal(ex.price || 0, ex.quantity || 1, days, ex.pricingType),
-              0
-            );
-            const oldDays = pb.rentalDays || currentBooking.rentalDuration || 1;
-            const perDayContrib = oldDays > 0 ? Math.round((pb.contributionLF2026 || 0) / oldDays) : 200;
-            const contrib = perDayContrib * days;
-            const fees = (pb.timbreFiscal ?? 100) + (pb.pickupLocationFee || 0) + (pb.returnLocationFee || 0) + (pb.differentLocationFee || 0);
-            const total = Math.max(0, subtotal + extrasTotal + fees + contrib - (pb.discountAmount || 0));
-            updates.pricingBreakdown = {
-              ...pb,
-              rentalDays: days,
-              subtotal,
-              extrasTotal,
-              dailyRate: Math.round(subtotal / days),
-              contributionLF2026: contrib,
-              totalAmount: total,
-            };
+          // Same rules as a new booking: period price, model and period minimum, every fee kept.
+          if ((currentBooking.vehicleChanges || []).length > 0) {
+            return NextResponse.json({ error: "La voiture a été changée pendant cette location : modifiez les dates avec « Prolonger / réduire »." }, { status: 409 });
           }
+          const q = await quoteBookingDates(currentBooking, new Date(mod.pickupDate), new Date(mod.returnDate));
+          if (q.minError) return NextResponse.json({ error: `Impossible d'accepter : ${q.minError}` }, { status: 409 });
+          updates.rentalDuration = q.days;
+          const pb = (currentBooking.pricingBreakdown as any).toObject ? (currentBooking.pricingBreakdown as any).toObject() : currentBooking.pricingBreakdown;
+          updates.pricingBreakdown = {
+            ...pb,
+            rentalDays: q.days,
+            subtotal: q.subtotal,
+            extrasTotal: q.extrasTotal,
+            dailyRate: q.lines[0]?.dailyRate ?? pb.dailyRate,
+            contributionLF2026: q.contribution,
+            totalAmount: q.total,
+          };
         }
 
         updates["modificationRequest.status"] = "approved";
@@ -384,6 +375,25 @@ export async function PATCH(
       .populate("pickupLocationId")
       .populate("returnLocationId");
     if (updates.pricingBreakdown) await resyncAfterPriceChange(id);
+    // Cancelled while money is held: the team must give it back (or record a cancellation fee).
+    if (booking && ["cancelled", "rejected"].includes(booking.bookingStatus) && !["cancelled", "rejected"].includes(oldBooking.bookingStatus)) {
+      const held = await bookingMoney(id, 0);
+      if (held.paid > 0 || held.depositHeld > 0) {
+        await notifyStaff({
+          type: "cancel_with_money",
+          category: "payment",
+          severity: "warning",
+          title: { fr: `Annulée avec argent encaissé — ${booking.bookingReference}`, en: `Cancelled with money held — ${booking.bookingReference}`, ar: `ملغاة مع مبلغ مقبوض — ${booking.bookingReference}` },
+          message: {
+            fr: `Encaissé : ${(held.paid / 100).toFixed(3)} DT${held.depositHeld ? `, caution : ${(held.depositHeld / 100).toFixed(3)} DT` : ""}. Enregistrez le remboursement (ou les frais d'annulation) dans Encaissements.`,
+            en: `Paid: ${(held.paid / 100).toFixed(3)} DT. Record the refund in Payments.`,
+            ar: `${(held.paid / 100).toFixed(3)} DT`,
+          },
+          link: `/admin/accounting?tab=payments`,
+          dedupeKey: `cancel_money:${id}`,
+        });
+      }
+    }
     await logAudit(session, updates.pricingBreakdown ? "booking.price" : "booking.update", "booking", id, {
       before: {
         status: oldBooking.bookingStatus,
@@ -819,8 +829,17 @@ async function handleAction(id: string, body: unknown, by: string) {
         { status: 409 }
       );
     }
-    dailyUsed = a.dailyRateTND !== undefined ? Math.round(a.dailyRateTND * 100) : Number(currentRate ?? vehicle?.pricing?.daily ?? 0);
-    const rental = dailyUsed * delta * Math.max(1, booking.vehicles?.length || 1);
+    // Extension at the base price of the car the customer has now (after a car change: the new model).
+    dailyUsed = a.dailyRateTND !== undefined ? Math.round(a.dailyRateTND * 100) : Number(vehicle?.pricing?.daily ?? currentRate ?? 0);
+    // Several cars: each one at its own model's base price (not the first car's price for all).
+    let rental = dailyUsed * delta * Math.max(1, booking.vehicles?.length || 1);
+    if (a.dailyRateTND === undefined && (booking.vehicles?.length || 0) > 1) {
+      const ids = booking.vehicles!.map((v) => String(v.vehicleId));
+      const models = await Vehicle.find({ _id: { $in: ids } }).select("pricing.daily").lean();
+      const rate = (vid: string) => Number(models.find((m) => String(m._id) === vid)?.pricing?.daily || dailyUsed);
+      rental = ids.reduce((acc, vid) => acc + rate(vid) * delta, 0);
+      dailyUsed = Math.round(rental / delta / ids.length);
+    }
     const extras = perDayExtras(delta);
     amount = rental + extras + perDayContrib * delta;
     pb.subtotal = (pb.subtotal || 0) + rental;

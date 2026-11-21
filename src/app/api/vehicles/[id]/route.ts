@@ -5,7 +5,7 @@ import { getVehicleStockAvailability, stockWithoutDates } from "@/lib/availabili
 import { sanitizeVehicleForClient } from "@/lib/sanitize";
 import { isStaffRequest } from "@/lib/apiAuth";
 import mongoose from "mongoose";
-import { applyRules, getRentalRules } from "@/lib/rentalRules";
+import { applyRules, getRentalRules, migrateGlobalPricingToModels } from "@/lib/rentalRules";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +13,8 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // Old fleet-wide rules are copied into the models before any car is read.
+  await migrateGlobalPricingToModels();
   try {
     await connectDB();
     const { id } = await params;
