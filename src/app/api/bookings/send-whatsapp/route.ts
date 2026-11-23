@@ -1,3 +1,4 @@
+import { rateLimit } from "@/lib/rateLimit";
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import { Booking, Customer, Vehicle, Location, AgencySetting } from "@/models";
@@ -14,6 +15,8 @@ export const dynamic = "force-dynamic";
  * using the agency sender credentials/gateway configured in the admin dashboard.
  */
 export async function POST(request: NextRequest) {
+  const limited = await rateLimit(request.headers, "voucher-whatsapp", 8, 3600);
+  if (limited) return limited;
   try {
     await connectDB();
     const body = await request.json();

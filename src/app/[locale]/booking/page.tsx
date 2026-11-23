@@ -1,5 +1,6 @@
 "use client";
 
+import { localDay } from "@/lib/localDay";
 import { useState, useEffect, Suspense, useMemo, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSearchParams, useRouter } from "next/navigation";
@@ -129,18 +130,10 @@ function BookingContent() {
   const searchParams = useSearchParams();
 
   // Tomorrow as default pickup
-  const defaultPickup = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return d.toISOString().split("T")[0];
-  }, []);
+  const defaultPickup = useMemo(() => localDay(1), []);
 
   // 4 days from now as default return (3-day rental)
-  const defaultReturn = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 4);
-    return d.toISOString().split("T")[0];
-  }, []);
+  const defaultReturn = useMemo(() => localDay(4), []);
 
   const [step, setStep] = useState<Step>(1);
   const stepContainerRef = useRef<HTMLDivElement>(null);
@@ -1044,7 +1037,7 @@ function BookingContent() {
                     <input
                       type="date"
                       value={data.pickupDate}
-                      min={new Date().toISOString().split("T")[0]}
+                      min={localDay()}
                       onChange={(e) => setData((d) => ({ ...d, pickupDate: e.target.value }))}
                       className="w-full min-w-0 px-4 py-3 rounded-xl border border-border dark:border-neutral-700 focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white dark:bg-neutral-800"
                     />
@@ -1058,7 +1051,7 @@ function BookingContent() {
                     <input
                       type="date"
                       value={data.returnDate}
-                      min={data.pickupDate || new Date().toISOString().split("T")[0]}
+                      min={data.pickupDate || localDay()}
                       onChange={(e) => setData((d) => ({ ...d, returnDate: e.target.value }))}
                       className="w-full min-w-0 px-4 py-3 rounded-xl border border-border dark:border-neutral-700 focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white dark:bg-neutral-800"
                     />

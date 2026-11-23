@@ -37,7 +37,11 @@ export default function AdminLoginPage() {
       });
 
       if (res?.error) {
-        setErrorMessage("Identifiants invalides. Veuillez vérifier l'adresse email et le mot de passe.");
+        setErrorMessage(
+          res.code === "rate_limited"
+            ? "Trop de tentatives de connexion. Réessayez dans 15 minutes."
+            : "Identifiants invalides. Veuillez vérifier l'adresse email et le mot de passe."
+        );
       } else {
         // Dashboard first — except Worker Assistance accounts, who land on their simplified workspace.
         let home = "/admin";

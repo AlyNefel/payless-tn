@@ -53,6 +53,8 @@ const env = {
   ALLOW_SEED: "true",
   SEED_TOKEN: "test-seed-token",
   ADMIN_INITIAL_PASSWORD: "TestPassword123!",
+  // The suites create many bookings from one IP; the limiter has its own check below.
+  RATE_LIMIT_DISABLED: "1",
   TEST_URL: URL_,
   TEST_MONGO_URL: mongo.getUri(),
 };

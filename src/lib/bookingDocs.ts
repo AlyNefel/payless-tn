@@ -192,8 +192,14 @@ export async function invoiceData(booking: IBooking): Promise<InvoiceData> {
       parts.unshift({ label: `Location ${c.toModel} (à partir du ${new Date(c.effectiveDate).toLocaleDateString("fr-FR", { timeZone: "UTC" })})`, days: d, daily: c.newDailyRate });
       remainingDays -= d;
     }
-    if (remainingDays > 0) parts.unshift({ label: `Location ${segs[0].fromModel}`, days: remainingDays, daily: segs[0].oldDailyRate });
     for (const p of parts) if (p.days > 0) lines.push({ label: p.label, qty: `${p.days} j`, unit: p.daily, total: p.daily * p.days });
+    if (remainingDays > 0) {
+      // Days with the first car: with a mixed price (two periods) they are not worth the booking's
+      // average rate. Without any extension/reduction, they are exactly what is left of the subtotal.
+      const after = lines.reduce((a, l) => a + l.total, 0);
+      const firstTotal = (booking.extensions || []).length === 0 ? Math.max(0, pb.subtotal - after) : segs[0].oldDailyRate * remainingDays;
+      lines.unshift({ label: `Location ${segs[0].fromModel}`, qty: `${remainingDays} j`, unit: Math.round(firstTotal / remainingDays), total: firstTotal });
+    }
   } else {
     lines = cars.map((c) => {
       const x = c as { brand?: string; model?: string; dailyRate?: number; subtotal?: number };

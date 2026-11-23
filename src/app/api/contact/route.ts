@@ -1,3 +1,4 @@
+import { rateLimit } from "@/lib/rateLimit";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { sendEmail } from "@/lib/email";
@@ -17,6 +18,8 @@ const schema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const limited = await rateLimit(request.headers, "contact", 5, 600);
+  if (limited) return limited;
   try {
     const body = await request.json();
     const parsed = schema.safeParse(body);

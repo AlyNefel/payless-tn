@@ -1,3 +1,4 @@
+import { rateLimit } from "@/lib/rateLimit";
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import { Booking, Vehicle, Customer, Location, AgencySetting } from "@/models";
@@ -11,6 +12,9 @@ import mongoose from "mongoose";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  // The voucher can be sent to another address: keep it from being used as a mail relay.
+  const limited = await rateLimit(request.headers, "voucher-email", 8, 3600);
+  if (limited) return limited;
   try {
     await connectDB();
     const body = await request.json().catch(() => ({}));

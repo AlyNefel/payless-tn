@@ -1,3 +1,4 @@
+import { rateLimit } from "@/lib/rateLimit";
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import Coupon from "@/models/Coupon";
@@ -12,6 +13,9 @@ const couponValidateSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  // Against guessing coupon codes.
+  const limited = await rateLimit(request.headers, "coupon", 20, 600);
+  if (limited) return limited;
   try {
     await connectDB();
 

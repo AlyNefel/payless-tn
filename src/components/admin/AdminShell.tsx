@@ -1,5 +1,6 @@
 "use client";
 
+import { localDay } from "@/lib/localDay";
 import React, { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import {
@@ -242,16 +243,18 @@ function AdminLayoutContent({
   const [showQuickBookingModal, setShowQuickBookingModal] = useState(false);
   const [theme, setTheme] = useState<"dark" | "light">("light");
 
-  // Track expanded groups in sidebar (accordion / collapsible submenus)
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({
-    all_managers: true, // collapsed by default to keep sidebar compact
-  });
+  // Sidebar accordion: one section open at a time. On arrival (and after each navigation) only the
+  // section of the current page is open; opening another section closes the previous one.
+  const activeGroupId =
+    visibleGroups.find((g) => g.id !== "all_managers" && g.items.some((i) => navMatch(i.href, pathname, query, g.items.map((x) => x.href))))?.id ?? null;
+  const [openGroup, setOpenGroup] = useState<string | null>(activeGroupId);
+  useEffect(() => {
+    setOpenGroup(activeGroupId);
+  }, [activeGroupId]);
+  const collapsedGroups: Record<string, boolean> = Object.fromEntries(NAV_GROUPS.map((g) => [g.id, g.id !== openGroup]));
 
   const toggleGroup = (groupId: string) => {
-    setCollapsedGroups((prev) => ({
-      ...prev,
-      [groupId]: !prev[groupId],
-    }));
+    setOpenGroup((prev) => (prev === groupId ? null : groupId));
   };
 
   // Live data for Quick Booking modal (direct reservation)
@@ -269,8 +272,8 @@ function AdminLayoutContent({
       vehicleId: "",
       pickupLocationId: "",
       returnLocationId: "",
-      pickupDate: pDate.toISOString().split("T")[0],
-      returnDate: rDate.toISOString().split("T")[0],
+      pickupDate: localDay(0, pDate),
+      returnDate: localDay(0, rDate),
     };
   });
   const [isSubmittingQuick, setIsSubmittingQuick] = useState(false);
