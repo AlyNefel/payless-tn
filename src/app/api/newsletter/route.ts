@@ -1,3 +1,4 @@
+import { rateLimit } from "@/lib/rateLimit";
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import NewsletterSubscriber from "@/models/NewsletterSubscriber";
@@ -9,6 +10,8 @@ const schema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const limited = await rateLimit(request.headers, "newsletter", 5, 600);
+  if (limited) return limited;
   try {
     const body = await request.json();
     const parsed = schema.safeParse(body);

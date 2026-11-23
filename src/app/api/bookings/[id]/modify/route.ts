@@ -1,3 +1,4 @@
+import { rateLimit } from "@/lib/rateLimit";
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import { Booking, Vehicle, Customer, Location } from "@/models";
@@ -18,6 +19,8 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const limited = await rateLimit(request.headers, "booking-modify", 15, 3600);
+  if (limited) return limited;
   try {
     await connectDB();
     const { id } = await params;

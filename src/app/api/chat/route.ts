@@ -1,3 +1,4 @@
+import { rateLimit } from "@/lib/rateLimit";
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import connectDB from "@/lib/db";
@@ -80,6 +81,9 @@ Be helpful, concise, and professional. For complex bookings or special requests,
 }
 
 export async function POST(req: NextRequest) {
+  // Each message is a paid AI call.
+  const limited = await rateLimit(req.headers, "chat", 30, 600);
+  if (limited) return limited;
   let agencyName = "PAYLESS CAR RENTAL TUNISIE";
   let phone = "+216 25 120 130";
   let email = "contact@paylesscarrental.tn";

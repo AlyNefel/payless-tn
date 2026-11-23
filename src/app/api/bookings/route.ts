@@ -1,3 +1,5 @@
+import { rateLimit } from "@/lib/rateLimit";
+import { getSessionRole } from "@/lib/apiAuth";
 import { NextRequest, NextResponse } from "next/server";
 import connectDB from "@/lib/db";
 import {
@@ -107,6 +109,15 @@ const createBookingSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  // Anti-spam: fake bookings would hold real cars. Staff (agency desk, one shared IP) are not limited.
+  {
+    const { session, role } = await getSessionRole();
+    const staff = Boolean(session && role && role !== "client");
+    if (!staff) {
+      const limited = await rateLimit(request.headers, "booking", 15, 3600);
+      if (limited) return limited;
+    }
+  }
   try {
     await connectDB();
 
@@ -945,6 +956,9 @@ export async function GET(request: NextRequest) {
     // Anonymous visitors may only look up ONE booking, proving ownership with reference + email.
     // Listing/filtering bookings is a back-office capability (see /api/admin/bookings).
     if (!staff) {
+      // Against guessing references.
+      const limited = await rateLimit(request.headers, "booking-lookup", 30, 600);
+      if (limited) return limited;
       if (!reference || !email) {
         return NextResponse.json(
           { success: false, error: "La référence et l'adresse email sont requises." },

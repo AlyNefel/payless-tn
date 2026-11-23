@@ -1,5 +1,6 @@
 "use client";
 
+import { localDay } from "@/lib/localDay";
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
@@ -569,7 +570,7 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
                       <input
                         type="date"
                         value={pickupDate}
-                        min={new Date().toISOString().split("T")[0]}
+                        min={localDay()}
                         onChange={(e) => setPickupDate(e.target.value)}
                         className="w-full h-10 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#1D4ED8] [color-scheme:dark]"
                       />
@@ -581,7 +582,7 @@ export function VehicleDetailClient({ vehicleId, locale, initialVehicle }: Props
                       <input
                         type="date"
                         value={returnDate}
-                        min={pickupDate || new Date().toISOString().split("T")[0]}
+                        min={pickupDate || localDay()}
                         onChange={(e) => setReturnDate(e.target.value)}
                         className="w-full h-10 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-[#1D4ED8] [color-scheme:dark]"
                       />

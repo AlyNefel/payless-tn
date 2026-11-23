@@ -1,8 +1,14 @@
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import connectDB from "./db";
 import User from "@/models/User";
 import { z } from "zod";
+import { isRateLimited } from "./rateLimit";
+
+/** Shown on the login page: too many attempts (see rateLimit). */
+class TooManyAttempts extends CredentialsSignin {
+  code = "rate_limited";
+}
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -17,11 +23,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 
         const { email, password } = parsed.data;
+        // Against password guessing: 10 attempts per email and IP every 15 minutes.
+        if (request?.headers && (await isRateLimited(request.headers, "login", 10, 900, email))) throw new TooManyAttempts();
 
         await connectDB();
         // The credentials provider backs the back-office portal only: customer accounts cannot sign in here.
