@@ -75,43 +75,14 @@ export function BrandBlock({ compact = false }: { compact?: boolean }) {
   );
 }
 
-/** Decorative Tunisian scene (amphitheatre and palm trees) + agency address at the bottom of the sidebar. */
+/** Agency address and phone at the bottom of the sidebar. */
 export function SidebarScene() {
   const info = useAgencyInfo();
   const place = [info.address, info.city].filter(Boolean).join(", ");
   return (
     <div className="relative shrink-0 overflow-hidden">
-      <svg viewBox="0 0 280 110" className="w-full h-auto block" aria-hidden>
-        <defs>
-          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#0d3488" stopOpacity="0" />
-            <stop offset="1" stopColor="#5b8de8" stopOpacity=".55" />
-          </linearGradient>
-        </defs>
-        <rect width="280" height="110" fill="url(#sky)" />
-        {/* amphitheatre */}
-        <g fill="#c9d8f5" opacity=".9">
-          <path d="M40 104V58q70-26 150 0v46z" />
-        </g>
-        <g fill="#0d3488" opacity=".55">
-          {Array.from({ length: 9 }, (_, i) => (
-            <path key={`a${i}`} d={`M${50 + i * 15} 74v-6a5 5 0 0 1 10 0v6z`} />
-          ))}
-          {Array.from({ length: 9 }, (_, i) => (
-            <path key={`b${i}`} d={`M${50 + i * 15} 92v-8a5 5 0 0 1 10 0v8z`} />
-          ))}
-        </g>
-        {/* palms */}
-        <g stroke="#0b2a6b" strokeLinecap="round" fill="none" opacity=".85">
-          <path d="M222 106q4-26 0-46" strokeWidth="4" />
-          <path d="M222 60q-14-6-26 2M222 60q14-8 28 0M222 60q-6-12-18-14M222 60q8-12 20-12M222 60q2 10-8 18" strokeWidth="3" />
-          <path d="M18 106q-3-20 2-36" strokeWidth="3" />
-          <path d="M20 70q-10-4-18 2M20 70q10-6 20 0M20 70q-2-9-10-11" strokeWidth="2.5" />
-        </g>
-        <path d="M0 104h280v6H0z" fill="#0b2a6b" opacity=".6" />
-      </svg>
       {(place || info.phone) && (
-        <div className="bg-[#0a2463] px-5 pb-3 pt-1 space-y-1 text-[12px] text-blue-50">
+        <div className="bg-[#0a2463] border-t border-white/10 px-5 py-3 space-y-1 text-[12px] text-blue-50">
           {place && (
             <p className="flex items-center gap-2 truncate"><MapPin className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">{place}</span></p>
           )}

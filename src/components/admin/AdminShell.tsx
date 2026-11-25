@@ -22,7 +22,6 @@ import {
   X,
   ChevronRight,
   ChevronDown,
-  Layers,
   ShieldCheck,
   CheckCircle2,
   AlertTriangle,
@@ -148,24 +147,6 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Rôles & permissions", href: "/admin/roles", icon: ShieldCheck },
     ],
   },
-  {
-    id: "all_managers",
-    groupTitle: { fr: "Tous les Managers (Raccourcis)", en: "All Managers (Quick Access)" },
-    icon: Layers,
-    items: [
-      { title: "Car Model Manager", href: "/admin/fleet", icon: Car },
-      { title: "Tarifs par Période", href: "/admin/pricing", icon: Tag },
-      { title: "Garage & Vidanges", href: "/admin/garage", icon: Wrench },
-      { title: "Tarifs Flotte", href: "/admin/fleet", icon: Car },
-      { title: "Customer Manager", href: "/admin/customers", icon: Users },
-      { title: "Notification Manager", href: "/admin/notifications", icon: Bell },
-      { title: "Options & Équipements", href: "/admin/options", icon: SlidersHorizontal },
-      { title: "Location Manager", href: "/admin/locations", icon: MapPin },
-      { title: "Frais & Taxes Manager", href: "/admin/fees", icon: SlidersHorizontal },
-      { title: "Reservation Manager", href: "/admin/bookings", icon: CalendarCheck2 },
-      { title: "Étapes de Réservation", href: "/admin/steps", icon: ListOrdered },
-    ],
-  },
 ];
 
 
@@ -246,7 +227,7 @@ function AdminLayoutContent({
   // Sidebar accordion: one section open at a time. On arrival (and after each navigation) only the
   // section of the current page is open; opening another section closes the previous one.
   const activeGroupId =
-    visibleGroups.find((g) => g.id !== "all_managers" && g.items.some((i) => navMatch(i.href, pathname, query, g.items.map((x) => x.href))))?.id ?? null;
+    visibleGroups.find((g) => g.items.some((i) => navMatch(i.href, pathname, query, g.items.map((x) => x.href))))?.id ?? null;
   const [openGroup, setOpenGroup] = useState<string | null>(activeGroupId);
   useEffect(() => {
     setOpenGroup(activeGroupId);
@@ -467,7 +448,7 @@ function AdminLayoutContent({
         </div>
 
         {/* Navigation Groups with Collapsible Submenus */}
-        <div className="flex-1 overflow-y-auto px-3.5 py-2 space-y-1.5 admin-sidebar-scroll">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden px-3.5 py-2 space-y-1.5 admin-sidebar-scroll">
           {visibleGroups.map((group) => {
             const GroupIcon = group.icon;
             const title = lang === "en" ? group.groupTitle.en : group.groupTitle.fr;
@@ -477,14 +458,7 @@ function AdminLayoutContent({
             );
 
             return (
-              <div
-                key={group.id}
-                className={`rounded-2xl transition-all duration-200 ${
-                  group.id === "all_managers"
-                    ? "bg-white/5 border border-white/10 p-1"
-                    : ""
-                }`}
-              >
+              <div key={group.id} className="rounded-2xl transition-all duration-200">
                 {/* Group Header Button (Accordion toggle) */}
                 <button
                   type="button"
@@ -503,11 +477,6 @@ function AdminLayoutContent({
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {group.id === "all_managers" && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-white/15 text-white">
-                        {group.items.length}
-                      </span>
-                    )}
                     <ChevronDown
                       className={`w-3.5 h-3.5 transition-transform duration-200 ${
                         isCollapsed ? "-rotate-90 text-blue-200/60" : "rotate-0 text-blue-100"
@@ -557,12 +526,12 @@ function AdminLayoutContent({
 
         {/* User Card & Logout */}
         <div className="px-4 py-3 bg-[#0a2463] border-t border-white/10">
-          <div className="p-2.5 rounded-xl bg-white/10 border border-white/10 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-blue-600/20">
+          <div className="p-2.5 rounded-xl bg-white/10 border border-white/10 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0 flex-1" title={me?.email || undefined}>
+              <div className="w-9 h-9 shrink-0 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-bold text-xs shadow-md shadow-blue-600/20">
                 {(me?.name || "A").charAt(0).toUpperCase()}
               </div>
-              <div className="overflow-hidden">
+              <div className="min-w-0">
                 <p className="text-xs font-bold text-white truncate">
                   {me?.name || "…"}
                 </p>
